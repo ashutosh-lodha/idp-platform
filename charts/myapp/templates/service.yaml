@@ -4,6 +4,10 @@ kind: Service
 metadata:
   name: {{ .Release.Name }}
   namespace: idp
+  labels:
+    app: {{ .Release.Name }}
+    env: {{ .Values.env }}
+    managed-by: idp
 spec:
   selector:
     app: {{ .Release.Name }}

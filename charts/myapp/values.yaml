@@ -9,6 +9,8 @@ type: web
 service:
   port: 80
 
+env: dev
+
 resources:
   limits:
     cpu: 200m

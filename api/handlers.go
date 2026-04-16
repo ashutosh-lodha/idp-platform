@@ -91,6 +91,7 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 		"--set", "image.tag="+tag,
 		"--set", fmt.Sprintf("replicaCount=%d", req.Replicas),
 		"--set", "type="+req.Type,
+		"--set", "env="+config.AppConfig.Env,
 	)
 
 	output, err := cmd.CombinedOutput()
@@ -210,7 +211,7 @@ func ExecHandler(w http.ResponseWriter, r *http.Request) {
 	// Open terminal
 	cmd := exec.Command(
 		"cmd", "/c", "start", "cmd.exe", "/k",
-		"kubectl exec -it "+pod+" -n idp -- /bin/sh",
+		"kubectl exec -it "+pod+" -n "+config.AppConfig.Namespace+" -- /bin/sh",
 	)
 
 	err = cmd.Start()
@@ -315,6 +316,7 @@ func UpdateServiceHandler(w http.ResponseWriter, r *http.Request) {
 		"--set", "image.tag="+tag,
 		"--set", fmt.Sprintf("replicaCount=%d", req.Replicas),
 		"--set", "type="+req.Type,
+		"--set", "env="+config.AppConfig.Env,
 	)
 
 	output, err := cmd.CombinedOutput()

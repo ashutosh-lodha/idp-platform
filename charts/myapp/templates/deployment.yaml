@@ -3,6 +3,10 @@ kind: Deployment
 metadata:
   name: {{ .Release.Name }}
   namespace: idp
+  labels:
+    app: {{ .Release.Name }}
+    env: {{ .Values.env }}
+    managed-by: idp
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
@@ -12,6 +16,8 @@ spec:
     metadata:
       labels:
         app: {{ .Release.Name }}
+        env: dev
+        managed-by: idp
     spec:
       containers:
         - name: {{ .Release.Name }}
