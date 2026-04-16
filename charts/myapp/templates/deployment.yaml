@@ -22,6 +22,7 @@ spec:
       containers:
         - name: {{ .Release.Name }}
           image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: Never
           ports:
             - containerPort: 80
           resources:

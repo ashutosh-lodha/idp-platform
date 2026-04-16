@@ -6,6 +6,7 @@ import (
 	"idp-platform/internal/config"
 	"idp-platform/models"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -136,7 +137,6 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func ListServicesHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("NEW GROUPED HANDLER HIT")
 	cmd := exec.Command(
 		"kubectl", "get", "pods",
 		"-n", config.AppConfig.Namespace,
@@ -410,4 +410,104 @@ func MetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+}
+
+func DeployRepoHandler(w http.ResponseWriter, r *http.Request) {
+	type Req struct {
+		Name string `json:"name"`
+		Repo string `json:"repo"`
+		Type string `json:"type"`
+	}
+
+	var req Req
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		http.Error(w, "invalid json", 400)
+		return
+	}
+
+	if req.Name == "" || req.Repo == "" {
+		http.Error(w, "name and repo required", 400)
+		return
+	}
+
+	if req.Type == "" {
+		req.Type = "web"
+	}
+
+	// prevent duplicate
+	check := exec.Command("helm", "status", req.Name, "-n", config.AppConfig.Namespace)
+	if check.Run() == nil {
+		http.Error(w, "service already exists", 400)
+		return
+	}
+
+	// working dir
+	workDir := "tmp\\" + req.Name
+
+	/*
+		//For linux/Mac - adjust commands accordingly for Windows
+		// cleanup old
+		exec.Command("rm", "-rf", workDir).Run()
+	*/
+	// force delete (Windows safe)
+	exec.Command("cmd", "/C", "if exist "+workDir+" rmdir /S /Q "+workDir).Run()
+	fmt.Println("Cleaning:", workDir)
+	// clone repo
+	cmd := exec.Command("git", "clone", req.Repo, workDir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		http.Error(w, "git clone failed: "+string(out), 500)
+		return
+	}
+
+	// check Dockerfile
+	dockerfilePath := workDir + "\\Dockerfile"
+
+	if _, err := os.Stat(dockerfilePath); os.IsNotExist(err) {
+		http.Error(w, "Dockerfile not found", 400)
+		return
+	}
+
+	image := "idp/" + req.Name + ":latest"
+
+	// build image
+	build := exec.Command("docker", "build", "-t", image, workDir)
+	buildOut, err := build.CombinedOutput()
+	if err != nil {
+		http.Error(w, "build failed: "+string(buildOut), 500)
+		return
+	}
+
+	// load into minikube
+	load := exec.Command("minikube", "image", "load", image)
+	loadOut, err := load.CombinedOutput()
+	if err != nil {
+		http.Error(w, "minikube load failed: "+string(loadOut), 500)
+		return
+	}
+
+	// deploy via helm
+	repoName := "idp/" + req.Name
+	cmd = exec.Command(
+		"helm", "install", req.Name, "charts/myapp",
+		"-n", config.AppConfig.Namespace,
+		"--set", "image.repository="+repoName,
+		"--set", "image.tag=latest",
+		"--set", "type="+req.Type,
+	)
+
+	helmOut, err := cmd.CombinedOutput()
+	if err != nil {
+		http.Error(w, "helm failed: "+string(helmOut), 500)
+		return
+	}
+
+	resp := map[string]string{
+		"name":   req.Name,
+		"repo":   req.Repo,
+		"status": "deployed",
+	}
+
+	json.NewEncoder(w).Encode(resp)
 }
