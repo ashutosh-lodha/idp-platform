@@ -16,10 +16,7 @@
 
     .loading { opacity: 0.5; pointer-events: none; }
 
-    #statusBar {
-      margin-top: 10px;
-      font-weight: bold;
-    }
+    #statusBar { margin-top: 10px; font-weight: bold; }
 
     #logsModal {
       display: none;
@@ -43,22 +40,51 @@
       color: red;
       font-weight: bold;
     }
+
+    .badge {
+      padding: 2px 6px;
+      margin-left: 6px;
+      border-radius: 4px;
+      font-size: 12px;
+      color: white;
+    }
+
+    .manual { background: #28a745; }
+    .repo { background: #007bff; }
   </style>
 </head>
 <body>
 
 <h2>IDP Dashboard</h2>
 
+<!-- 🔥 MODE SELECTOR -->
 <div id="controls">
+  <select id="mode" onchange="toggleMode()">
+    <option value="image">Image</option>
+    <option value="repo">GitHub Repo</option>
+  </select>
+
   <input id="name" placeholder="Service Name" />
-  <input id="image" placeholder="Image (nginx:latest)" />
+
+  <!-- IMAGE INPUT -->
+  <div id="imageFields">
+    <input id="image" placeholder="Image (nginx:latest)" />
+  </div>
+
+  <!-- REPO INPUT -->
+  <div id="repoFields" style="display:none;">
+    <input id="repo" placeholder="GitHub Repo URL" />
+  </div>
+
   <input id="replicas" type="number" value="1" min="1" max="5" />
+
   <select id="type">
     <option value="web">web</option>
     <option value="api">api</option>
     <option value="worker">worker</option>
   </select>
-  <button onclick="deploy()">Deploy</button>
+
+  <button onclick="deployUnified()">Deploy</button>
   <button onclick="loadServices()">Refresh</button>
 </div>
 
@@ -78,12 +104,23 @@
   <tbody id="tableBody"></tbody>
 </table>
 
+<!-- LOGS -->
 <div id="logsModal">
   <span id="closeLogs" onclick="closeLogs()">X</span>
   <pre id="logsContent"></pre>
 </div>
 
 <script>
+
+function toggleMode() {
+  const mode = document.getElementById("mode").value;
+
+  document.getElementById("imageFields").style.display =
+    mode === "image" ? "block" : "none";
+
+  document.getElementById("repoFields").style.display =
+    mode === "repo" ? "block" : "none";
+}
 
 function setLoading(state, msg="") {
   const controls = document.getElementById("controls");
@@ -104,21 +141,45 @@ function getStatusClass(running, total) {
   return "red";
 }
 
-async function deploy() {
-  let name = document.getElementById("name").value;
-  let image = document.getElementById("image").value;
-  let replicas = parseInt(document.getElementById("replicas").value);
-  let type = document.getElementById("type").value;
+async function deployUnified() {
+  const mode = document.getElementById("mode").value;
+  const name = document.getElementById("name").value;
+  const type = document.getElementById("type").value;
+  const replicas = parseInt(document.getElementById("replicas").value);
 
-  if (!image.includes(":")) image += ":latest";
+  if (!name) {
+    alert("Name required");
+    return;
+  }
 
-  setLoading(true, "Deploying service...");
+  setLoading(true, "Deploying...");
 
-  await fetch("/provision", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({ name, image, replicas, type })
-  });
+  if (mode === "image") {
+    let image = document.getElementById("image").value;
+
+    if (!image.includes(":")) image += ":latest";
+
+    await fetch("/provision", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ name, image, replicas, type })
+    });
+
+  } else {
+    const repo = document.getElementById("repo").value;
+
+    if (!repo) {
+      alert("Repo URL required");
+      setLoading(false);
+      return;
+    }
+
+    await fetch("/deploy-repo", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ name, repo, type })
+    });
+  }
 
   setLoading(false);
   loadServices();
@@ -128,14 +189,13 @@ async function updateService(name) {
   const replicas = prompt("Enter new replicas (1-5):");
   if (!replicas) return;
 
-  setLoading(true, "Updating service...");
+  setLoading(true, "Updating...");
 
   await fetch("/service", {
     method: "PUT",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({
-      name: name,
-      image: "nginx:latest",
+      name,
       replicas: parseInt(replicas),
       type: "web"
     })
@@ -146,10 +206,8 @@ async function updateService(name) {
 }
 
 async function deleteService(name) {
-  setLoading(true, "Deleting service...");
-
+  setLoading(true, "Deleting...");
   await fetch(`/delete?name=${name}`);
-
   setLoading(false);
   loadServices();
 }
@@ -182,10 +240,17 @@ async function loadServices() {
       }
     });
 
+    const badgeClass = s.source === "repo" ? "repo" : "manual";
+
     const tr = document.createElement("tr");
 
     tr.innerHTML = `
-      <td>${s.name}</td>
+      <td>
+        ${s.name}
+        <span class="badge ${badgeClass}">
+          ${s.source}
+        </span>
+      </td>
       <td class="${getStatusClass(s.running, s.replicas)}">
         ${s.running}/${s.replicas}
       </td>

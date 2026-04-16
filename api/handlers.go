@@ -354,11 +354,6 @@ func UpdateServiceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !strings.Contains(req.Image, ":") {
-		http.Error(w, "image must include tag", http.StatusBadRequest)
-		return
-	}
-
 	if req.Replicas < 1 || req.Replicas > 5 {
 		http.Error(w, "replicas must be between 1 and 5", http.StatusBadRequest)
 		return
@@ -371,11 +366,7 @@ func UpdateServiceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// split image
-	parts := strings.Split(req.Image, ":")
-	repo := parts[0]
-	tag := parts[1]
-
+	// detect source
 	sourceCmd := exec.Command(
 		"kubectl", "get", "pods",
 		"-n", config.AppConfig.Namespace,
@@ -387,10 +378,33 @@ func UpdateServiceHandler(w http.ResponseWriter, r *http.Request) {
 	source := strings.TrimSpace(string(sourceOut))
 
 	if source == "" {
-		source = "manual" // fallback safety
+		source = "manual"
 	}
 
-	// upgrade instead of install
+	var repo, tag string
+
+	if source == "repo" {
+		// ✅ FORCE repo image (CRITICAL FIX)
+		repo = "idp/" + req.Name
+		tag = "latest"
+	} else {
+		// manual → allow user image
+		if !strings.Contains(req.Image, ":") {
+			http.Error(w, "image must include tag", http.StatusBadRequest)
+			return
+		}
+
+		parts := strings.Split(req.Image, ":")
+		repo = parts[0]
+		tag = parts[1]
+	}
+
+	// default type safety
+	if req.Type == "" {
+		req.Type = "web"
+	}
+
+	// upgrade
 	cmd := exec.Command(
 		"helm", "upgrade", req.Name, "charts/myapp",
 		"-n", config.AppConfig.Namespace,
@@ -404,14 +418,15 @@ func UpdateServiceHandler(w http.ResponseWriter, r *http.Request) {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		http.Error(w, string(output), 500)
+		http.Error(w, string(output), http.StatusInternalServerError)
 		return
 	}
 
 	resp := map[string]interface{}{
 		"name":     req.Name,
-		"image":    req.Image,
+		"image":    repo + ":" + tag,
 		"replicas": req.Replicas,
+		"source":   source,
 		"status":   "updated",
 	}
 
