@@ -335,3 +335,47 @@ func UpdateServiceHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
+
+func MetricsHandler(w http.ResponseWriter, r *http.Request) {
+	cmd := exec.Command("kubectl", "top", "pods", "-n", config.AppConfig.Namespace, "--no-headers")
+
+	output, err := cmd.Output()
+	if err != nil {
+		http.Error(w, "metrics not available (is metrics-server installed?)", 500)
+		return
+	}
+
+	lines := strings.Split(string(output), "\n")
+
+	type Metric struct {
+		Name   string `json:"name"`
+		Pod    string `json:"pod"`
+		CPU    string `json:"cpu"`
+		Memory string `json:"memory"`
+	}
+
+	var result []Metric
+
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+
+		pod := fields[0]
+		cpu := fields[1]
+		mem := fields[2]
+
+		name := strings.Split(pod, "-")[0]
+
+		result = append(result, Metric{
+			Name:   name,
+			Pod:    pod,
+			CPU:    cpu,
+			Memory: mem,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
