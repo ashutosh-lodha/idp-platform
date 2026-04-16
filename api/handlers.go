@@ -3,11 +3,11 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"idp-platform/models"
 	"net/http"
 	"os/exec"
 	"strings"
-
-	"idp-platform/models"
+	"time"
 )
 
 type ServiceInfo struct {
@@ -43,7 +43,6 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 
 	// GUARDRAILS
 
-	// name validation
 	if req.Name == "" {
 		http.Error(w, "name required", http.StatusBadRequest)
 		return
@@ -53,24 +52,19 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// default type
 	if req.Type == "" {
 		req.Type = "web"
 	}
-
-	// type validation
 	if req.Type != "web" && req.Type != "api" && req.Type != "worker" {
 		http.Error(w, "invalid type (web | api | worker)", http.StatusBadRequest)
 		return
 	}
 
-	// image validation
 	if !strings.Contains(req.Image, ":") {
 		http.Error(w, "image must include tag (e.g., nginx:latest)", http.StatusBadRequest)
 		return
 	}
 
-	// replicas validation
 	if req.Replicas < 1 || req.Replicas > 5 {
 		http.Error(w, "replicas must be between 1 and 5", http.StatusBadRequest)
 		return
@@ -88,7 +82,7 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 	repo := parts[0]
 	tag := parts[1]
 
-	// pass type to Helm
+	// install
 	cmd := exec.Command(
 		"helm", "install", req.Name, "charts/myapp",
 		"-n", "idp",
@@ -104,12 +98,35 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// wait for pod readiness
+	status := "pending"
+
+	for i := 0; i < 15; i++ {
+		checkPods := exec.Command("kubectl", "get", "pods", "-n", "idp",
+			"-l", "app="+req.Name,
+			"-o", "jsonpath={.items[*].status.phase}")
+
+		out, _ := checkPods.Output()
+		podStatus := string(out)
+
+		if strings.Contains(podStatus, "Running") {
+			status = "running"
+			break
+		}
+		if strings.Contains(podStatus, "Error") || strings.Contains(podStatus, "CrashLoopBackOff") {
+			status = "failed"
+			break
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+
 	resp := map[string]interface{}{
 		"name":     req.Name,
 		"type":     req.Type,
 		"image":    req.Image,
 		"replicas": req.Replicas,
-		"status":   "provisioned",
+		"status":   status,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
