@@ -11,6 +11,8 @@ service:
 
 env: dev
 
+source: manual
+
 resources:
   limits:
     cpu: 200m

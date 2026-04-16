@@ -93,6 +93,7 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 		"--set", fmt.Sprintf("replicaCount=%d", req.Replicas),
 		"--set", "type="+req.Type,
 		"--set", "env="+config.AppConfig.Env,
+		"--set", "source=manual",
 	)
 
 	output, err := cmd.CombinedOutput()
@@ -140,33 +141,54 @@ func ListServicesHandler(w http.ResponseWriter, r *http.Request) {
 	cmd := exec.Command(
 		"kubectl", "get", "pods",
 		"-n", config.AppConfig.Namespace,
-		"-o", "jsonpath={range .items[*]}{.metadata.name} {.metadata.labels.app} {.status.phase}{\"\\n\"}{end}",
+		"-o", "json",
 	)
 
 	out, err := cmd.Output()
 	if err != nil {
-		http.Error(w, "failed to get pods", 500)
+		http.Error(w, "failed to get pods", http.StatusInternalServerError)
 		return
 	}
 
-	lines := strings.Split(string(out), "\n")
+	type Pod struct {
+		Metadata struct {
+			Name   string            `json:"name"`
+			Labels map[string]string `json:"labels"`
+		} `json:"metadata"`
+		Status struct {
+			Phase string `json:"phase"`
+		} `json:"status"`
+	}
+
+	var parsed struct {
+		Items []Pod `json:"items"`
+	}
+
+	err = json.Unmarshal(out, &parsed)
+	if err != nil {
+		http.Error(w, "failed to parse kubectl output", http.StatusInternalServerError)
+		return
+	}
 
 	serviceMap := make(map[string][]ServiceInfo)
 
-	for _, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
+	for _, p := range parsed.Items {
+		app := p.Metadata.Labels["app"]
+		source := p.Metadata.Labels["source"]
+
+		if app == "" {
 			continue
 		}
 
-		pod := fields[0]
-		app := fields[1]
-		status := fields[2]
+		if source == "" {
+			source = "unknown" // fallback safety
+		}
 
 		serviceMap[app] = append(serviceMap[app], ServiceInfo{
 			Name:   app,
-			Pod:    pod,
-			Status: status,
+			Pod:    p.Metadata.Name,
+			Status: p.Status.Phase,
+			URL:    "", // FIX: URL should not store source
 		})
 	}
 
@@ -180,11 +202,25 @@ func ListServicesHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		source := "unknown"
+		if len(pods) > 0 {
+			// extract from first pod again (clean way)
+			for _, p := range parsed.Items {
+				if strings.HasPrefix(p.Metadata.Name, app) {
+					if val, ok := p.Metadata.Labels["source"]; ok && val != "" {
+						source = val
+					}
+					break
+				}
+			}
+		}
+
 		result = append(result, map[string]interface{}{
 			"name":     app,
 			"replicas": len(pods),
 			"running":  running,
 			"pods":     pods,
+			"source":   source,
 		})
 	}
 
@@ -340,6 +376,20 @@ func UpdateServiceHandler(w http.ResponseWriter, r *http.Request) {
 	repo := parts[0]
 	tag := parts[1]
 
+	sourceCmd := exec.Command(
+		"kubectl", "get", "pods",
+		"-n", config.AppConfig.Namespace,
+		"-l", "app="+req.Name,
+		"-o", "jsonpath={.items[0].metadata.labels.source}",
+	)
+
+	sourceOut, _ := sourceCmd.Output()
+	source := strings.TrimSpace(string(sourceOut))
+
+	if source == "" {
+		source = "manual" // fallback safety
+	}
+
 	// upgrade instead of install
 	cmd := exec.Command(
 		"helm", "upgrade", req.Name, "charts/myapp",
@@ -349,6 +399,7 @@ func UpdateServiceHandler(w http.ResponseWriter, r *http.Request) {
 		"--set", fmt.Sprintf("replicaCount=%d", req.Replicas),
 		"--set", "type="+req.Type,
 		"--set", "env="+config.AppConfig.Env,
+		"--set", "source="+source,
 	)
 
 	output, err := cmd.CombinedOutput()
@@ -422,12 +473,12 @@ func DeployRepoHandler(w http.ResponseWriter, r *http.Request) {
 	var req Req
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		http.Error(w, "invalid json", 400)
+		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
 
 	if req.Name == "" || req.Repo == "" {
-		http.Error(w, "name and repo required", 400)
+		http.Error(w, "name and repo required", http.StatusBadRequest)
 		return
 	}
 
@@ -438,52 +489,53 @@ func DeployRepoHandler(w http.ResponseWriter, r *http.Request) {
 	// prevent duplicate
 	check := exec.Command("helm", "status", req.Name, "-n", config.AppConfig.Namespace)
 	if check.Run() == nil {
-		http.Error(w, "service already exists", 400)
+		http.Error(w, "service already exists", http.StatusBadRequest)
 		return
 	}
 
 	// working dir
 	workDir := "tmp\\" + req.Name
 
-	/*
-		//For linux/Mac - adjust commands accordingly for Windows
-		// cleanup old
-		exec.Command("rm", "-rf", workDir).Run()
-	*/
-	// force delete (Windows safe)
+	// cleanup BEFORE clone
 	exec.Command("cmd", "/C", "if exist "+workDir+" rmdir /S /Q "+workDir).Run()
-	fmt.Println("Cleaning:", workDir)
+
+	fmt.Println("Cloning repo:", req.Repo)
+
 	// clone repo
 	cmd := exec.Command("git", "clone", req.Repo, workDir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		http.Error(w, "git clone failed: "+string(out), 500)
+		http.Error(w, "git clone failed: "+string(out), http.StatusInternalServerError)
 		return
 	}
 
 	// check Dockerfile
 	dockerfilePath := workDir + "\\Dockerfile"
-
 	if _, err := os.Stat(dockerfilePath); os.IsNotExist(err) {
-		http.Error(w, "Dockerfile not found", 400)
+		exec.Command("cmd", "/C", "rmdir", "/S", "/Q", workDir).Run()
+		http.Error(w, "Dockerfile must be at repo root", http.StatusBadRequest)
 		return
 	}
 
 	image := "idp/" + req.Name + ":latest"
 
 	// build image
+	fmt.Println("Building image:", image)
 	build := exec.Command("docker", "build", "-t", image, workDir)
 	buildOut, err := build.CombinedOutput()
 	if err != nil {
-		http.Error(w, "build failed: "+string(buildOut), 500)
+		exec.Command("cmd", "/C", "rmdir", "/S", "/Q", workDir).Run()
+		http.Error(w, "build failed: "+string(buildOut), http.StatusInternalServerError)
 		return
 	}
 
 	// load into minikube
+	fmt.Println("Loading into minikube")
 	load := exec.Command("minikube", "image", "load", image)
 	loadOut, err := load.CombinedOutput()
 	if err != nil {
-		http.Error(w, "minikube load failed: "+string(loadOut), 500)
+		exec.Command("cmd", "/C", "rmdir", "/S", "/Q", workDir).Run()
+		http.Error(w, "minikube load failed: "+string(loadOut), http.StatusInternalServerError)
 		return
 	}
 
@@ -495,19 +547,27 @@ func DeployRepoHandler(w http.ResponseWriter, r *http.Request) {
 		"--set", "image.repository="+repoName,
 		"--set", "image.tag=latest",
 		"--set", "type="+req.Type,
+		"--set", "env="+config.AppConfig.Env,
+		"--set", "source=repo",
 	)
 
 	helmOut, err := cmd.CombinedOutput()
 	if err != nil {
-		http.Error(w, "helm failed: "+string(helmOut), 500)
+		exec.Command("cmd", "/C", "rmdir", "/S", "/Q", workDir).Run()
+		http.Error(w, "helm failed: "+string(helmOut), http.StatusInternalServerError)
 		return
 	}
+
+	// cleanup AFTER success
+	exec.Command("cmd", "/C", "rmdir", "/S", "/Q", workDir).Run()
 
 	resp := map[string]string{
 		"name":   req.Name,
 		"repo":   req.Repo,
+		"source": "repo",
 		"status": "deployed",
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }

@@ -8,9 +8,12 @@ metadata:
     app: {{ .Release.Name }}
     env: {{ .Values.env }}
     managed-by: idp
+    source: {{ .Values.source }}
 spec:
   selector:
     app: {{ .Release.Name }}
+    env: {{ .Values.env }}
+    managed-by: idp
   ports:
     - protocol: TCP
       port: {{ .Values.service.port }}
