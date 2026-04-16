@@ -270,3 +270,66 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write(output)
 }
+
+func UpdateServiceHandler(w http.ResponseWriter, r *http.Request) {
+	var req models.ServiceContract
+
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+
+	if !strings.Contains(req.Image, ":") {
+		http.Error(w, "image must include tag", http.StatusBadRequest)
+		return
+	}
+
+	if req.Replicas < 1 || req.Replicas > 5 {
+		http.Error(w, "replicas must be between 1 and 5", http.StatusBadRequest)
+		return
+	}
+
+	// check service exists
+	checkCmd := exec.Command("helm", "status", req.Name, "-n", config.AppConfig.Namespace)
+	if err := checkCmd.Run(); err != nil {
+		http.Error(w, "service does not exist", http.StatusBadRequest)
+		return
+	}
+
+	// split image
+	parts := strings.Split(req.Image, ":")
+	repo := parts[0]
+	tag := parts[1]
+
+	// upgrade instead of install
+	cmd := exec.Command(
+		"helm", "upgrade", req.Name, "charts/myapp",
+		"-n", config.AppConfig.Namespace,
+		"--set", "image.repository="+repo,
+		"--set", "image.tag="+tag,
+		"--set", fmt.Sprintf("replicaCount=%d", req.Replicas),
+		"--set", "type="+req.Type,
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		http.Error(w, string(output), 500)
+		return
+	}
+
+	resp := map[string]interface{}{
+		"name":     req.Name,
+		"image":    req.Image,
+		"replicas": req.Replicas,
+		"status":   "updated",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
