@@ -4,11 +4,34 @@
   <title>IDP Dashboard</title>
   <style>
     body { font-family: Arial; padding: 20px; }
-    input { margin: 5px; padding: 5px; }
+    input, select { margin: 5px; padding: 5px; }
     button { margin: 5px; padding: 5px 10px; cursor: pointer; }
     table { border-collapse: collapse; width: 100%; margin-top: 20px; }
     th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
     th { background-color: #f4f4f4; }
+
+    #logsModal {
+      display: none;
+      position: fixed;
+      top: 10%;
+      left: 10%;
+      width: 80%;
+      height: 70%;
+      background: black;
+      color: lime;
+      padding: 10px;
+      overflow: auto;
+      z-index: 1000;
+    }
+
+    #closeLogs {
+      position: absolute;
+      top: 5px;
+      right: 10px;
+      cursor: pointer;
+      color: red;
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
@@ -17,7 +40,13 @@
 
 <div>
   <input id="name" placeholder="Service Name" />
-  <input id="image" placeholder="Image (nginx)" />
+  <input id="image" placeholder="Image (nginx:latest)" />
+  <input id="replicas" type="number" value="1" min="1" max="5" />
+  <select id="type">
+    <option value="web">web</option>
+    <option value="api">api</option>
+    <option value="worker">worker</option>
+  </select>
   <button onclick="deploy()">Deploy</button>
   <button onclick="loadServices()">Refresh</button>
 </div>
@@ -28,70 +57,144 @@
       <th>Name</th>
       <th>Pod</th>
       <th>Status</th>
+      <th>CPU</th>
+      <th>Memory</th>
       <th>Actions</th>
     </tr>
   </thead>
   <tbody id="tableBody"></tbody>
 </table>
 
+<div id="logsModal">
+  <span id="closeLogs" onclick="closeLogs()">X</span>
+  <pre id="logsContent"></pre>
+</div>
+
 <script>
-const API = "";
 
-function deploy() {
-  const name = document.getElementById("name").value;
-  const image = document.getElementById("image").value;
-
-  fetch(`/provision?name=${name}&image=${image}`)
-    .then(res => res.text())
-    .then(msg => {
-      alert(msg);
-      loadServices();
-    });
+function safeJSON(res) {
+  return res.text().then(t => {
+    try { return JSON.parse(t); }
+    catch { return t; }
+  });
 }
 
-function loadServices() {
-  fetch(`/services`)
-    .then(res => res.json())
-    .then(data => {
-      const tbody = document.getElementById("tableBody");
-      tbody.innerHTML = "";
+async function deploy() {
+  let name = document.getElementById("name").value;
+  let image = document.getElementById("image").value;
+  let replicas = parseInt(document.getElementById("replicas").value);
+  let type = document.getElementById("type").value;
 
-      data.forEach(s => {
-        const row = document.createElement("tr");
+  if (!image.includes(":")) image += ":latest";
 
-        row.innerHTML = `
-          <td>${s.name}</td>
-          <td>${s.pod}</td>
-          <td>${s.status}</td>
-          <td>
-            <button onclick="openService('${s.name}')">Open</button>
-            <button onclick="deleteService('${s.name}')">Delete</button>
-            <button onclick="execPod('${s.pod}')">Exec</button>
-          </td>
-        `;
+  const res = await fetch("/provision", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ name, image, replicas, type })
+  });
 
-        tbody.appendChild(row);
-      });
-    });
+  const data = await safeJSON(res);
+  alert(JSON.stringify(data));
+  loadServices();
 }
 
-function openService(name) {
-  fetch(`/open?name=${name}`)
-    .then(res => res.text())
-    .then(url => window.open(url, "_blank"));
+async function deleteService(name) {
+  const res = await fetch(`/delete?name=${name}`);
+  const text = await res.text();
+  alert(text);
+  loadServices();
 }
 
-function deleteService(name) {
-  fetch(`/delete?name=${name}`)
-    .then(() => loadServices());
+async function openService(name) {
+  const res = await fetch(`/open?name=${name}`);
+  const url = await res.text();
+  if (!url || url.includes("error")) {
+    alert("Not accessible");
+    return;
+  }
+  window.open(url, "_blank");
 }
 
 function execPod(pod) {
   fetch(`/exec?pod=${pod}`);
 }
 
-// auto load
+function showLogs(pod) {
+  fetch(`/logs?pod=${pod}`)
+    .then(r => r.text())
+    .then(t => {
+      document.getElementById("logsContent").innerText = t;
+      document.getElementById("logsModal").style.display = "block";
+    });
+}
+
+function closeLogs() {
+  document.getElementById("logsModal").style.display = "none";
+}
+
+async function updateService(name) {
+  const replicas = prompt("New replicas:");
+  if (!replicas) return;
+
+  const res = await fetch("/service", {
+    method: "PUT",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      name,
+      image: "nginx:latest",
+      replicas: parseInt(replicas),
+      type: "web"
+    })
+  });
+
+  const data = await safeJSON(res);
+  alert(JSON.stringify(data));
+  loadServices();
+}
+
+async function loadServices() {
+  try {
+    const services = await fetch("/services").then(r => r.json());
+
+    let metrics = [];
+    try {
+      metrics = await fetch("/metrics").then(r => r.json());
+    } catch {
+      console.warn("metrics not available");
+    }
+
+    const tbody = document.getElementById("tableBody");
+    tbody.innerHTML = "";
+
+    services.forEach(s => {
+      const metric = metrics.find(m => m.pod === s.pod) || {};
+
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${s.name}</td>
+        <td>${s.pod}</td>
+        <td>${s.status}</td>
+        <td>${metric.cpu || "-"}</td>
+        <td>${metric.memory || "-"}</td>
+        <td>
+          <button onclick="openService('${s.name}')">Open</button>
+          <button onclick="deleteService('${s.name}')">Delete</button>
+          <button onclick="execPod('${s.pod}')">Exec</button>
+          <button onclick="showLogs('${s.pod}')">Logs</button>
+          <button onclick="updateService('${s.name}')">Update</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+  } catch (e) {
+    console.error("services failed", e);
+  }
+}
+
 loadServices();
+setInterval(loadServices, 5000);
+
 </script>
 
 </body>
