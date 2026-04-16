@@ -1,0 +1,20 @@
+# Binaries
+*.exe
+*.out
+
+# Go
+bin/
+vendor/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/

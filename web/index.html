@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>IDP Dashboard</title>
+  <style>
+    body { font-family: Arial; padding: 20px; }
+    input { margin: 5px; padding: 5px; }
+    button { margin: 5px; padding: 5px 10px; cursor: pointer; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+    th { background-color: #f4f4f4; }
+  </style>
+</head>
+<body>
+
+<h2>IDP Dashboard</h2>
+
+<div>
+  <input id="name" placeholder="Service Name" />
+  <input id="image" placeholder="Image (nginx)" />
+  <button onclick="deploy()">Deploy</button>
+  <button onclick="loadServices()">Refresh</button>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Pod</th>
+      <th>Status</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody id="tableBody"></tbody>
+</table>
+
+<script>
+const API = "";
+
+function deploy() {
+  const name = document.getElementById("name").value;
+  const image = document.getElementById("image").value;
+
+  fetch(`/provision?name=${name}&image=${image}`)
+    .then(res => res.text())
+    .then(msg => {
+      alert(msg);
+      loadServices();
+    });
+}
+
+function loadServices() {
+  fetch(`/services`)
+    .then(res => res.json())
+    .then(data => {
+      const tbody = document.getElementById("tableBody");
+      tbody.innerHTML = "";
+
+      data.forEach(s => {
+        const row = document.createElement("tr");
+
+        row.innerHTML = `
+          <td>${s.name}</td>
+          <td>${s.pod}</td>
+          <td>${s.status}</td>
+          <td>
+            <button onclick="openService('${s.name}')">Open</button>
+            <button onclick="deleteService('${s.name}')">Delete</button>
+            <button onclick="execPod('${s.pod}')">Exec</button>
+          </td>
+        `;
+
+        tbody.appendChild(row);
+      });
+    });
+}
+
+function openService(name) {
+  fetch(`/open?name=${name}`)
+    .then(res => res.text())
+    .then(url => window.open(url, "_blank"));
+}
+
+function deleteService(name) {
+  fetch(`/delete?name=${name}`)
+    .then(() => loadServices());
+}
+
+function execPod(pod) {
+  fetch(`/exec?pod=${pod}`);
+}
+
+// auto load
+loadServices();
+</script>
+
+</body>
+</html>
