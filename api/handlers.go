@@ -136,23 +136,55 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func ListServicesHandler(w http.ResponseWriter, r *http.Request) {
-	podCmd := exec.Command("kubectl", "get", "pods", "-n", config.AppConfig.Namespace, "-o", "jsonpath={.items[*].metadata.name}")
-	podOut, _ := podCmd.Output()
+	fmt.Println("NEW GROUPED HANDLER HIT")
+	cmd := exec.Command(
+		"kubectl", "get", "pods",
+		"-n", config.AppConfig.Namespace,
+		"-o", "jsonpath={range .items[*]}{.metadata.name} {.metadata.labels.app} {.status.phase}{\"\\n\"}{end}",
+	)
 
-	pods := strings.Fields(string(podOut))
+	out, err := cmd.Output()
+	if err != nil {
+		http.Error(w, "failed to get pods", 500)
+		return
+	}
 
-	var result []ServiceInfo
+	lines := strings.Split(string(out), "\n")
 
-	for _, pod := range pods {
-		name := strings.Split(pod, "-")[0]
+	serviceMap := make(map[string][]ServiceInfo)
 
-		statusCmd := exec.Command("kubectl", "get", "pod", pod, "-n", config.AppConfig.Namespace, "-o", "jsonpath={.status.phase}")
-		statusOut, _ := statusCmd.Output()
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
 
-		result = append(result, ServiceInfo{
-			Name:   name,
+		pod := fields[0]
+		app := fields[1]
+		status := fields[2]
+
+		serviceMap[app] = append(serviceMap[app], ServiceInfo{
+			Name:   app,
 			Pod:    pod,
-			Status: string(statusOut),
+			Status: status,
+		})
+	}
+
+	var result []map[string]interface{}
+
+	for app, pods := range serviceMap {
+		running := 0
+		for _, p := range pods {
+			if p.Status == "Running" {
+				running++
+			}
+		}
+
+		result = append(result, map[string]interface{}{
+			"name":     app,
+			"replicas": len(pods),
+			"running":  running,
+			"pods":     pods,
 		})
 	}
 

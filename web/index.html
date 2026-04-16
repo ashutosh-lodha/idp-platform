@@ -10,6 +10,10 @@
     th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
     th { background-color: #f4f4f4; }
 
+    .green { color: green; font-weight: bold; }
+    .yellow { color: orange; font-weight: bold; }
+    .red { color: red; font-weight: bold; }
+
     #logsModal {
       display: none;
       position: fixed;
@@ -54,9 +58,9 @@
 <table>
   <thead>
     <tr>
-      <th>Name</th>
-      <th>Pod</th>
+      <th>Service</th>
       <th>Status</th>
+      <th>Replicas</th>
       <th>CPU</th>
       <th>Memory</th>
       <th>Actions</th>
@@ -72,11 +76,10 @@
 
 <script>
 
-function safeJSON(res) {
-  return res.text().then(t => {
-    try { return JSON.parse(t); }
-    catch { return t; }
-  });
+function getStatusClass(running, total) {
+  if (running === total) return "green";
+  if (running > 0) return "yellow";
+  return "red";
 }
 
 async function deploy() {
@@ -87,32 +90,119 @@ async function deploy() {
 
   if (!image.includes(":")) image += ":latest";
 
-  const res = await fetch("/provision", {
+  await fetch("/provision", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({ name, image, replicas, type })
   });
 
-  const data = await safeJSON(res);
-  alert(JSON.stringify(data));
   loadServices();
 }
 
+async function updateService(name) {
+  const replicas = prompt("Enter new replicas (1-5):");
+  if (!replicas) return;
+
+  await fetch("/service", {
+    method: "PUT",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      name: name,
+      image: "nginx:latest",
+      replicas: parseInt(replicas),
+      type: "web"
+    })
+  });
+
+  loadServices();
+}
+
+async function loadServices() {
+  const res = await fetch("/services");
+  const raw = await res.json();
+  const services = raw.value || raw;
+
+  let metrics = [];
+  try {
+    const m = await fetch("/metrics");
+    const mraw = await m.json();
+    metrics = mraw.value || mraw;
+  } catch {}
+
+  const tbody = document.getElementById("tableBody");
+  tbody.innerHTML = "";
+
+  services.forEach(s => {
+
+    let totalCPU = 0;
+    let totalMemory = 0;
+
+    s.pods.forEach(p => {
+      const m = metrics.find(x => x.pod === p.pod);
+      if (m) {
+        totalCPU += parseInt(m.cpu || "0");
+        totalMemory += parseInt(m.memory || "0");
+      }
+    });
+
+    const tr = document.createElement("tr");
+
+    tr.innerHTML = `
+      <td>${s.name}</td>
+      <td class="${getStatusClass(s.running, s.replicas)}">
+        ${s.running}/${s.replicas}
+      </td>
+      <td>${s.replicas}</td>
+      <td>${totalCPU}m</td>
+      <td>${totalMemory}Mi</td>
+      <td>
+        <button onclick="openService('${s.name}')">Open</button>
+        <button onclick="deleteService('${s.name}')">Delete</button>
+        <button onclick="updateService('${s.name}')">Update</button>
+        <button onclick="togglePods('${s.name}')">Pods</button>
+      </td>
+    `;
+
+    tbody.appendChild(tr);
+
+    s.pods.forEach(p => {
+      const podMetric = metrics.find(x => x.pod === p.pod) || {};
+
+      const podRow = document.createElement("tr");
+      podRow.style.display = "none";
+      podRow.className = "pod-" + s.name;
+
+      podRow.innerHTML = `
+        <td colspan="2">↳ ${p.pod}</td>
+        <td>${p.status}</td>
+        <td>${podMetric.cpu || "-"}</td>
+        <td>${podMetric.memory || "-"}</td>
+        <td>
+          <button onclick="execPod('${p.pod}')">Exec</button>
+          <button onclick="showLogs('${p.pod}')">Logs</button>
+        </td>
+      `;
+
+      tbody.appendChild(podRow);
+    });
+  });
+}
+
+function togglePods(name) {
+  document.querySelectorAll(".pod-" + name).forEach(r => {
+    r.style.display = r.style.display === "none" ? "table-row" : "none";
+  });
+}
+
 async function deleteService(name) {
-  const res = await fetch(`/delete?name=${name}`);
-  const text = await res.text();
-  alert(text);
+  await fetch(`/delete?name=${name}`);
   loadServices();
 }
 
 async function openService(name) {
   const res = await fetch(`/open?name=${name}`);
   const url = await res.text();
-  if (!url || url.includes("error")) {
-    alert("Not accessible");
-    return;
-  }
-  window.open(url, "_blank");
+  if (url) window.open(url, "_blank");
 }
 
 function execPod(pod) {
@@ -130,66 +220,6 @@ function showLogs(pod) {
 
 function closeLogs() {
   document.getElementById("logsModal").style.display = "none";
-}
-
-async function updateService(name) {
-  const replicas = prompt("New replicas:");
-  if (!replicas) return;
-
-  const res = await fetch("/service", {
-    method: "PUT",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({
-      name,
-      image: "nginx:latest",
-      replicas: parseInt(replicas),
-      type: "web"
-    })
-  });
-
-  const data = await safeJSON(res);
-  alert(JSON.stringify(data));
-  loadServices();
-}
-
-async function loadServices() {
-  try {
-    const services = await fetch("/services").then(r => r.json());
-
-    let metrics = [];
-    try {
-      metrics = await fetch("/metrics").then(r => r.json());
-    } catch {
-      console.warn("metrics not available");
-    }
-
-    const tbody = document.getElementById("tableBody");
-    tbody.innerHTML = "";
-
-    services.forEach(s => {
-      const metric = metrics.find(m => m.pod === s.pod) || {};
-
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${s.name}</td>
-        <td>${s.pod}</td>
-        <td>${s.status}</td>
-        <td>${metric.cpu || "-"}</td>
-        <td>${metric.memory || "-"}</td>
-        <td>
-          <button onclick="openService('${s.name}')">Open</button>
-          <button onclick="deleteService('${s.name}')">Delete</button>
-          <button onclick="execPod('${s.pod}')">Exec</button>
-          <button onclick="showLogs('${s.pod}')">Logs</button>
-          <button onclick="updateService('${s.name}')">Update</button>
-        </td>
-      `;
-      tbody.appendChild(tr);
-    });
-
-  } catch (e) {
-    console.error("services failed", e);
-  }
 }
 
 loadServices();
