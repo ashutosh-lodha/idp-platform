@@ -25,7 +25,7 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 	var req models.ServiceContract
 
-	// JSON support
+	// JSON input
 	if r.Method == http.MethodPost {
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
@@ -33,7 +33,7 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// fallback (old flow)
+		// fallback
 		req.Name = r.URL.Query().Get("name")
 		req.Image = r.URL.Query().Get("image")
 		req.Type = "web"
@@ -41,31 +41,41 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 		req.Expose = true
 	}
 
-	if req.Name == "" || req.Image == "" {
-		http.Error(w, "name and image required", http.StatusBadRequest)
+	// GUARDRAILS
+
+	// name validation
+	if req.Name == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+	if strings.Contains(req.Name, " ") || req.Name != strings.ToLower(req.Name) {
+		http.Error(w, "invalid name (lowercase, no spaces)", http.StatusBadRequest)
 		return
 	}
 
-	// defaults
-	if req.Replicas == 0 {
-		req.Replicas = 1
+	// image validation
+	if !strings.Contains(req.Image, ":") {
+		http.Error(w, "image must include tag (e.g., nginx:latest)", http.StatusBadRequest)
+		return
 	}
 
-	// 🔥 FIX: split image into repo + tag
-	repo := req.Image
-	tag := "latest"
-
-	if strings.Contains(req.Image, ":") {
-		parts := strings.Split(req.Image, ":")
-		repo = parts[0]
-		tag = parts[1]
+	// replicas validation
+	if req.Replicas < 1 || req.Replicas > 5 {
+		http.Error(w, "replicas must be between 1 and 5", http.StatusBadRequest)
+		return
 	}
 
-	// delete if exists
+	// duplicate prevention
 	checkCmd := exec.Command("helm", "status", req.Name, "-n", "idp")
 	if err := checkCmd.Run(); err == nil {
-		exec.Command("helm", "uninstall", req.Name, "-n", "idp").Run()
+		http.Error(w, "service already exists", http.StatusBadRequest)
+		return
 	}
+
+	// split image
+	parts := strings.Split(req.Image, ":")
+	repo := parts[0]
+	tag := parts[1]
 
 	// install
 	cmd := exec.Command(
@@ -84,7 +94,6 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]interface{}{
 		"name":     req.Name,
-		"type":     req.Type,
 		"image":    req.Image,
 		"replicas": req.Replicas,
 		"status":   "provisioned",
