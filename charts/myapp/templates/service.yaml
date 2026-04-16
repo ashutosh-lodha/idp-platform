@@ -1,3 +1,4 @@
+{{- if ne .Values.type "worker" }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -10,4 +11,5 @@ spec:
     - protocol: TCP
       port: {{ .Values.service.port }}
       targetPort: 80
-  type: NodePort
+  type: {{ if eq .Values.type "web" }}NodePort{{ else }}ClusterIP{{ end }}
+{{- end }}

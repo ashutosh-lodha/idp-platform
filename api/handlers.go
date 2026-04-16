@@ -53,6 +53,17 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// default type
+	if req.Type == "" {
+		req.Type = "web"
+	}
+
+	// type validation
+	if req.Type != "web" && req.Type != "api" && req.Type != "worker" {
+		http.Error(w, "invalid type (web | api | worker)", http.StatusBadRequest)
+		return
+	}
+
 	// image validation
 	if !strings.Contains(req.Image, ":") {
 		http.Error(w, "image must include tag (e.g., nginx:latest)", http.StatusBadRequest)
@@ -77,13 +88,14 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 	repo := parts[0]
 	tag := parts[1]
 
-	// install
+	// pass type to Helm
 	cmd := exec.Command(
 		"helm", "install", req.Name, "charts/myapp",
 		"-n", "idp",
 		"--set", "image.repository="+repo,
 		"--set", "image.tag="+tag,
 		"--set", fmt.Sprintf("replicaCount=%d", req.Replicas),
+		"--set", "type="+req.Type,
 	)
 
 	output, err := cmd.CombinedOutput()
@@ -94,6 +106,7 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]interface{}{
 		"name":     req.Name,
+		"type":     req.Type,
 		"image":    req.Image,
 		"replicas": req.Replicas,
 		"status":   "provisioned",
