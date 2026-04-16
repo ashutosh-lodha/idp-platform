@@ -185,12 +185,34 @@ func ExecHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check pod exists
+	checkCmd := exec.Command("kubectl", "get", "pod", pod, "-n", "idp")
+	if err := checkCmd.Run(); err != nil {
+		http.Error(w, "pod not found", http.StatusBadRequest)
+		return
+	}
+
+	// Check pod status
+	statusCmd := exec.Command("kubectl", "get", "pod", pod, "-n", "idp", "-o", "jsonpath={.status.phase}")
+	statusOut, err := statusCmd.Output()
+	if err != nil {
+		http.Error(w, "failed to get pod status", 500)
+		return
+	}
+
+	status := string(statusOut)
+	if status != "Running" {
+		http.Error(w, "pod is not running", http.StatusBadRequest)
+		return
+	}
+
+	// Open terminal
 	cmd := exec.Command(
 		"cmd", "/c", "start", "cmd.exe", "/k",
 		"kubectl exec -it "+pod+" -n idp -- /bin/sh",
 	)
 
-	err := cmd.Start()
+	err = cmd.Start()
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
