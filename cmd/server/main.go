@@ -1,13 +1,19 @@
 package main
 
 import (
+	"idp-platform/api"
+	config "idp-platform/internal/config"
 	"log"
 	"net/http"
-
-	"idp-platform/api"
 )
 
 func main() {
+	// Load config
+	err := config.LoadConfig()
+	if err != nil {
+		panic(err)
+	}
+
 	mux := http.NewServeMux()
 
 	// API routes

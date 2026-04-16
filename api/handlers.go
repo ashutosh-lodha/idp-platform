@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"idp-platform/internal/config"
 	"idp-platform/models"
 	"net/http"
 	"os/exec"
@@ -71,7 +72,7 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// duplicate prevention
-	checkCmd := exec.Command("helm", "status", req.Name, "-n", "idp")
+	checkCmd := exec.Command("helm", "status", req.Name, "-n", config.AppConfig.Namespace)
 	if err := checkCmd.Run(); err == nil {
 		http.Error(w, "service already exists", http.StatusBadRequest)
 		return
@@ -85,7 +86,7 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 	// install
 	cmd := exec.Command(
 		"helm", "install", req.Name, "charts/myapp",
-		"-n", "idp",
+		"-n", config.AppConfig.Namespace,
 		"--set", "image.repository="+repo,
 		"--set", "image.tag="+tag,
 		"--set", fmt.Sprintf("replicaCount=%d", req.Replicas),
@@ -102,7 +103,7 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 	status := "pending"
 
 	for i := 0; i < 15; i++ {
-		checkPods := exec.Command("kubectl", "get", "pods", "-n", "idp",
+		checkPods := exec.Command("kubectl", "get", "pods", "-n", config.AppConfig.Namespace,
 			"-l", "app="+req.Name,
 			"-o", "jsonpath={.items[*].status.phase}")
 
@@ -134,7 +135,7 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func ListServicesHandler(w http.ResponseWriter, r *http.Request) {
-	podCmd := exec.Command("kubectl", "get", "pods", "-n", "idp", "-o", "jsonpath={.items[*].metadata.name}")
+	podCmd := exec.Command("kubectl", "get", "pods", "-n", config.AppConfig.Namespace, "-o", "jsonpath={.items[*].metadata.name}")
 	podOut, _ := podCmd.Output()
 
 	pods := strings.Fields(string(podOut))
@@ -144,7 +145,7 @@ func ListServicesHandler(w http.ResponseWriter, r *http.Request) {
 	for _, pod := range pods {
 		name := strings.Split(pod, "-")[0]
 
-		statusCmd := exec.Command("kubectl", "get", "pod", pod, "-n", "idp", "-o", "jsonpath={.status.phase}")
+		statusCmd := exec.Command("kubectl", "get", "pod", pod, "-n", config.AppConfig.Namespace, "-o", "jsonpath={.status.phase}")
 		statusOut, _ := statusCmd.Output()
 
 		result = append(result, ServiceInfo{
@@ -166,7 +167,7 @@ func DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := exec.Command("helm", "uninstall", name, "-n", "idp")
+	cmd := exec.Command("helm", "uninstall", name, "-n", config.AppConfig.Namespace)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -186,14 +187,14 @@ func ExecHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check pod exists
-	checkCmd := exec.Command("kubectl", "get", "pod", pod, "-n", "idp")
+	checkCmd := exec.Command("kubectl", "get", "pod", pod, "-n", config.AppConfig.Namespace)
 	if err := checkCmd.Run(); err != nil {
 		http.Error(w, "pod not found", http.StatusBadRequest)
 		return
 	}
 
 	// Check pod status
-	statusCmd := exec.Command("kubectl", "get", "pod", pod, "-n", "idp", "-o", "jsonpath={.status.phase}")
+	statusCmd := exec.Command("kubectl", "get", "pod", pod, "-n", config.AppConfig.Namespace, "-o", "jsonpath={.status.phase}")
 	statusOut, err := statusCmd.Output()
 	if err != nil {
 		http.Error(w, "failed to get pod status", 500)
@@ -229,7 +230,7 @@ func OpenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := exec.Command("minikube", "service", name, "-n", "idp", "--url")
+	cmd := exec.Command("minikube", "service", name, "-n", config.AppConfig.Namespace, "--url")
 
 	outPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -258,7 +259,7 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := exec.Command("kubectl", "logs", pod, "-n", "idp")
+	cmd := exec.Command("kubectl", "logs", pod, "-n", config.AppConfig.Namespace)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
