@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
+
+	"idp-platform/models"
 )
 
 type ServiceInfo struct {
@@ -21,25 +23,57 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
-	name := r.URL.Query().Get("name")
-	image := r.URL.Query().Get("image")
+	var req models.ServiceContract
 
-	if name == "" || image == "" {
+	// JSON support
+	if r.Method == http.MethodPost {
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil {
+			http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+			return
+		}
+	} else {
+		// fallback (old flow)
+		req.Name = r.URL.Query().Get("name")
+		req.Image = r.URL.Query().Get("image")
+		req.Type = "web"
+		req.Replicas = 1
+		req.Expose = true
+	}
+
+	if req.Name == "" || req.Image == "" {
 		http.Error(w, "name and image required", http.StatusBadRequest)
 		return
 	}
 
+	// defaults
+	if req.Replicas == 0 {
+		req.Replicas = 1
+	}
+
+	// 🔥 FIX: split image into repo + tag
+	repo := req.Image
+	tag := "latest"
+
+	if strings.Contains(req.Image, ":") {
+		parts := strings.Split(req.Image, ":")
+		repo = parts[0]
+		tag = parts[1]
+	}
+
 	// delete if exists
-	checkCmd := exec.Command("helm", "status", name, "-n", "idp")
+	checkCmd := exec.Command("helm", "status", req.Name, "-n", "idp")
 	if err := checkCmd.Run(); err == nil {
-		exec.Command("helm", "uninstall", name, "-n", "idp").Run()
+		exec.Command("helm", "uninstall", req.Name, "-n", "idp").Run()
 	}
 
 	// install
 	cmd := exec.Command(
-		"helm", "install", name, "charts/myapp",
+		"helm", "install", req.Name, "charts/myapp",
 		"-n", "idp",
-		"--set", "image.repository="+image,
+		"--set", "image.repository="+repo,
+		"--set", "image.tag="+tag,
+		"--set", fmt.Sprintf("replicaCount=%d", req.Replicas),
 	)
 
 	output, err := cmd.CombinedOutput()
@@ -48,7 +82,16 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Fprintf(w, "Deployed: %s\n", name)
+	resp := map[string]interface{}{
+		"name":     req.Name,
+		"type":     req.Type,
+		"image":    req.Image,
+		"replicas": req.Replicas,
+		"status":   "provisioned",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func ListServicesHandler(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +168,6 @@ func OpenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// run in background
 	cmd := exec.Command("minikube", "service", name, "-n", "idp", "--url")
 
 	outPipe, err := cmd.StdoutPipe()
@@ -139,7 +181,6 @@ func OpenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// read first line (URL)
 	buf := make([]byte, 1024)
 	n, _ := outPipe.Read(buf)
 
