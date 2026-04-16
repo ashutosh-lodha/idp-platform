@@ -227,3 +227,23 @@ func OpenHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Write([]byte(url))
 }
+
+func LogsHandler(w http.ResponseWriter, r *http.Request) {
+	pod := r.URL.Query().Get("pod")
+
+	if pod == "" {
+		http.Error(w, "pod required", http.StatusBadRequest)
+		return
+	}
+
+	cmd := exec.Command("kubectl", "logs", pod, "-n", "idp")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		http.Error(w, string(output), 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write(output)
+}

@@ -9,4 +9,5 @@ func RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/delete", DeleteHandler)
 	mux.HandleFunc("/exec", ExecHandler)
 	mux.HandleFunc("/open", OpenHandler)
+	mux.HandleFunc("/logs", LogsHandler)
 }
