@@ -14,6 +14,13 @@
     .yellow { color: orange; font-weight: bold; }
     .red { color: red; font-weight: bold; }
 
+    .loading { opacity: 0.5; pointer-events: none; }
+
+    #statusBar {
+      margin-top: 10px;
+      font-weight: bold;
+    }
+
     #logsModal {
       display: none;
       position: fixed;
@@ -42,7 +49,7 @@
 
 <h2>IDP Dashboard</h2>
 
-<div>
+<div id="controls">
   <input id="name" placeholder="Service Name" />
   <input id="image" placeholder="Image (nginx:latest)" />
   <input id="replicas" type="number" value="1" min="1" max="5" />
@@ -54,6 +61,8 @@
   <button onclick="deploy()">Deploy</button>
   <button onclick="loadServices()">Refresh</button>
 </div>
+
+<div id="statusBar"></div>
 
 <table>
   <thead>
@@ -76,6 +85,19 @@
 
 <script>
 
+function setLoading(state, msg="") {
+  const controls = document.getElementById("controls");
+  const status = document.getElementById("statusBar");
+
+  if (state) {
+    controls.classList.add("loading");
+    status.innerText = msg;
+  } else {
+    controls.classList.remove("loading");
+    status.innerText = "";
+  }
+}
+
 function getStatusClass(running, total) {
   if (running === total) return "green";
   if (running > 0) return "yellow";
@@ -90,18 +112,23 @@ async function deploy() {
 
   if (!image.includes(":")) image += ":latest";
 
+  setLoading(true, "Deploying service...");
+
   await fetch("/provision", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({ name, image, replicas, type })
   });
 
+  setLoading(false);
   loadServices();
 }
 
 async function updateService(name) {
   const replicas = prompt("Enter new replicas (1-5):");
   if (!replicas) return;
+
+  setLoading(true, "Updating service...");
 
   await fetch("/service", {
     method: "PUT",
@@ -114,6 +141,16 @@ async function updateService(name) {
     })
   });
 
+  setLoading(false);
+  loadServices();
+}
+
+async function deleteService(name) {
+  setLoading(true, "Deleting service...");
+
+  await fetch(`/delete?name=${name}`);
+
+  setLoading(false);
   loadServices();
 }
 
@@ -192,11 +229,6 @@ function togglePods(name) {
   document.querySelectorAll(".pod-" + name).forEach(r => {
     r.style.display = r.style.display === "none" ? "table-row" : "none";
   });
-}
-
-async function deleteService(name) {
-  await fetch(`/delete?name=${name}`);
-  loadServices();
 }
 
 async function openService(name) {
