@@ -84,17 +84,27 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 	repo := parts[0]
 	tag := parts[1]
 
-	// install
-	cmd := exec.Command(
-		"helm", "install", req.Name, "charts/myapp",
+	// 🔥 ENV SUPPORT
+	var envArgs []string
+	for k, v := range req.Env {
+		envArgs = append(envArgs, "--set", fmt.Sprintf("envVars.%s=%s", k, v))
+	}
+
+	// install (converted to args)
+	cmdArgs := []string{
+		"install", req.Name, "charts/myapp",
 		"-n", config.AppConfig.Namespace,
-		"--set", "image.repository="+repo,
-		"--set", "image.tag="+tag,
+		"--set", "image.repository=" + repo,
+		"--set", "image.tag=" + tag,
 		"--set", fmt.Sprintf("replicaCount=%d", req.Replicas),
-		"--set", "type="+req.Type,
-		"--set", "env="+config.AppConfig.Env,
+		"--set", "type=" + req.Type,
+		"--set", "env=" + config.AppConfig.Env,
 		"--set", "source=manual",
-	)
+	}
+
+	cmdArgs = append(cmdArgs, envArgs...)
+
+	cmd := exec.Command("helm", cmdArgs...)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -106,9 +116,12 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 	status := "pending"
 
 	for i := 0; i < 15; i++ {
-		checkPods := exec.Command("kubectl", "get", "pods", "-n", config.AppConfig.Namespace,
+		checkPods := exec.Command(
+			"kubectl", "get", "pods",
+			"-n", config.AppConfig.Namespace,
 			"-l", "app="+req.Name,
-			"-o", "jsonpath={.items[*].status.phase}")
+			"-o", "jsonpath={.items[*].status.phase}",
+		)
 
 		out, _ := checkPods.Output()
 		podStatus := string(out)

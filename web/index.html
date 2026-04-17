@@ -57,7 +57,6 @@
 
 <h2>IDP Dashboard</h2>
 
-<!-- 🔥 MODE SELECTOR -->
 <div id="controls">
   <select id="mode" onchange="toggleMode()">
     <option value="image">Image</option>
@@ -66,15 +65,16 @@
 
   <input id="name" placeholder="Service Name" />
 
-  <!-- IMAGE INPUT -->
   <div id="imageFields">
     <input id="image" placeholder="Image (nginx:latest)" />
   </div>
 
-  <!-- REPO INPUT -->
   <div id="repoFields" style="display:none;">
     <input id="repo" placeholder="GitHub Repo URL" />
   </div>
+
+  <!-- ✅ ENV INPUT -->
+  <input id="env" placeholder="ENV (KEY=VALUE,KEY2=VALUE2)" />
 
   <input id="replicas" type="number" value="1" min="1" max="5" />
 
@@ -104,7 +104,6 @@
   <tbody id="tableBody"></tbody>
 </table>
 
-<!-- LOGS -->
 <div id="logsModal">
   <span id="closeLogs" onclick="closeLogs()">X</span>
   <pre id="logsContent"></pre>
@@ -114,10 +113,8 @@
 
 function toggleMode() {
   const mode = document.getElementById("mode").value;
-
   document.getElementById("imageFields").style.display =
     mode === "image" ? "block" : "none";
-
   document.getElementById("repoFields").style.display =
     mode === "repo" ? "block" : "none";
 }
@@ -147,6 +144,16 @@ async function deployUnified() {
   const type = document.getElementById("type").value;
   const replicas = parseInt(document.getElementById("replicas").value);
 
+  const envInput = document.getElementById("env").value;
+  const env = {};
+
+  if (envInput) {
+    envInput.split(",").forEach(pair => {
+      const [k, v] = pair.split("=");
+      if (k && v) env[k.trim()] = v.trim();
+    });
+  }
+
   if (!name) {
     alert("Name required");
     return;
@@ -156,13 +163,12 @@ async function deployUnified() {
 
   if (mode === "image") {
     let image = document.getElementById("image").value;
-
     if (!image.includes(":")) image += ":latest";
 
     await fetch("/provision", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ name, image, replicas, type })
+      body: JSON.stringify({ name, image, replicas, type, env })
     });
 
   } else {
@@ -177,7 +183,7 @@ async function deployUnified() {
     await fetch("/deploy-repo", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ name, repo, type })
+      body: JSON.stringify({ name, repo, type, env })
     });
   }
 
@@ -228,7 +234,6 @@ async function loadServices() {
   tbody.innerHTML = "";
 
   services.forEach(s => {
-
     let totalCPU = 0;
     let totalMemory = 0;
 
