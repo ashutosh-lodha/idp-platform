@@ -342,22 +342,56 @@ func ExecHandler(w http.ResponseWriter, r *http.Request) {
 
 func LogsHandler(w http.ResponseWriter, r *http.Request) {
 	pod := r.URL.Query().Get("pod")
-
 	if pod == "" {
 		http.Error(w, "pod required", http.StatusBadRequest)
 		return
 	}
 
-	cmd := exec.Command("kubectl", "logs", pod, "-n", config.AppConfig.Namespace)
+	cmd := exec.Command("kubectl", "logs", "-f", pod, "-n", config.AppConfig.Namespace)
 
-	output, err := cmd.CombinedOutput()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		http.Error(w, string(output), 500)
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	err = cmd.Start()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/plain")
-	w.Write(output)
+	w.Header().Set("Transfer-Encoding", "chunked")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "stream unsupported", 500)
+		return
+	}
+
+	// 🔥 detect client disconnect
+	notify := r.Context().Done()
+
+	buffer := make([]byte, 1024)
+
+	for {
+		select {
+		case <-notify:
+			// ✅ user closed → kill kubectl
+			cmd.Process.Kill()
+			return
+		default:
+			n, err := stdout.Read(buffer)
+			if n > 0 {
+				w.Write(buffer[:n])
+				flusher.Flush()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}
 }
 
 func UpdateServiceHandler(w http.ResponseWriter, r *http.Request) {

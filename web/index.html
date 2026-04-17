@@ -28,24 +28,15 @@
     #logsModal {
       display: none;
       position: fixed;
-      top: 10%;
-      left: 10%;
-      width: 80%;
-      height: 70%;
+      top: 5%;
+      left: 5%;
+      width: 90%;
+      height: 85%;
       background: black;
       color: lime;
-      padding: 10px;
-      overflow: auto;
       z-index: 1000;
-    }
-
-    #closeLogs {
-      position: absolute;
-      top: 5px;
-      right: 10px;
-      cursor: pointer;
-      color: red;
-      font-weight: bold;
+      border-radius: 8px;
+      padding: 10px;
     }
   </style>
 </head>
@@ -96,12 +87,42 @@
   <tbody id="tableBody"></tbody>
 </table>
 
+<!-- FIXED MODAL -->
 <div id="logsModal">
-  <span id="closeLogs" onclick="closeLogs()">X</span>
-  <pre id="logsContent"></pre>
+
+  <!-- FIXED HEADER -->
+  <div style="
+    position: sticky;
+    top: 0;
+    background: black;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #333;
+    padding-bottom: 8px;
+    z-index: 10;
+  ">
+    <strong>Logs</strong>
+    <div>
+      <button onclick="closeLogs()">Stop</button>
+      <button onclick="closeLogs()">✖</button>
+    </div>
+  </div>
+
+  <!-- ONLY THIS SCROLLS -->
+  <div style="
+    height: calc(100% - 50px);
+    overflow-y: auto;
+    margin-top: 10px;
+  ">
+    <pre id="logsContent" style="margin:0;"></pre>
+  </div>
+
 </div>
 
 <script>
+
+// (ALL YOUR EXISTING JS — UNCHANGED)
 
 function toggleMode() {
   const mode = document.getElementById("mode").value;
@@ -139,19 +160,43 @@ function execPod(pod) {
   fetch(`/exec?pod=${pod}`);
 }
 
+let logReader = null;
+
 function showLogs(pod) {
-  fetch(`/logs?pod=${pod}`)
-    .then(r => r.text())
-    .then(t => {
-      document.getElementById("logsContent").innerText = t;
-      document.getElementById("logsModal").style.display = "block";
-    });
+  const modal = document.getElementById("logsModal");
+  const content = document.getElementById("logsContent");
+
+  modal.style.display = "block";
+  content.innerText = "Connecting...\n";
+
+  fetch(`/logs?pod=${pod}`).then(response => {
+    logReader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    function read() {
+      logReader.read().then(({ done, value }) => {
+        if (done) return;
+
+        content.innerText += decoder.decode(value);
+        content.scrollTop = content.scrollHeight;
+
+        read();
+      });
+    }
+
+    read();
+  });
 }
 
 function closeLogs() {
   document.getElementById("logsModal").style.display = "none";
-}
+  document.getElementById("logsContent").innerText = "";
 
+  if (logReader) {
+    logReader.cancel();
+    logReader = null;
+  }
+}
 async function deployUnified() {
   const mode = document.getElementById("mode").value;
   const name = document.getElementById("name").value;
@@ -215,12 +260,21 @@ async function loadServices() {
   } catch {}
 
   const tbody = document.getElementById("tableBody");
-  tbody.innerHTML = "";
+
+  // keep existing rows (no full wipe)
+  const existingRows = {};
+
+  Array.from(tbody.children).forEach(row => {
+    if (row.dataset && row.dataset.key) {
+      existingRows[row.dataset.key] = row;
+    }
+  });
 
   services.sort((a, b) => a.name.localeCompare(b.name));
 
-  services.forEach(s => {
+  let newRows = [];
 
+  services.forEach(s => {
     s.pods.sort((a, b) => a.pod.localeCompare(b.pod));
 
     let totalCPU = 0;
@@ -236,9 +290,15 @@ async function loadServices() {
 
     const badgeClass = s.source === "repo" ? "repo" : "manual";
 
-    const tr = document.createElement("tr");
+    const serviceKey = "svc-" + s.name;
 
-    tr.innerHTML = `
+    let serviceRow = existingRows[serviceKey];
+    if (!serviceRow) {
+      serviceRow = document.createElement("tr");
+      serviceRow.dataset.key = serviceKey;
+    }
+
+    serviceRow.innerHTML = `
       <td>${s.name} <span class="badge ${badgeClass}">${s.source}</span></td>
       <td class="${getStatusClass(s.pods)}">${s.running}/${s.replicas}</td>
       <td>${s.replicas}</td>
@@ -251,15 +311,21 @@ async function loadServices() {
       </td>
     `;
 
-    tbody.appendChild(tr);
+    newRows.push(serviceRow);
 
-    // PODS (always visible)
+    // PODS
     s.pods.forEach(p => {
+      const podKey = "pod-" + p.pod;
+
+      let podRow = existingRows[podKey];
+      if (!podRow) {
+        podRow = document.createElement("tr");
+        podRow.dataset.key = podKey;
+      }
+
       const m = metrics.find(x => x.pod === p.pod) || {};
 
-      const prow = document.createElement("tr");
-
-      prow.innerHTML = `
+      podRow.innerHTML = `
         <td>↳ ${p.pod}</td>
         <td>${p.status}</td>
         <td>-</td>
@@ -272,9 +338,12 @@ async function loadServices() {
         </td>
       `;
 
-      tbody.appendChild(prow);
+      newRows.push(podRow);
     });
   });
+
+  // replace DOM in one go (no flicker)
+  tbody.replaceChildren(...newRows);
 }
 
 loadServices();
