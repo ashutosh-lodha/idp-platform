@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 )
 
@@ -169,29 +170,23 @@ func ListServicesHandler(w http.ResponseWriter, r *http.Request) {
 	serviceMap := make(map[string][]ServiceInfo)
 	hashMap := make(map[string]string)
 
-	// 🔥 STEP 1: get latest pod hash per app
+	// latest RS hash
 	for _, p := range parsed.Items {
 		app := p.Metadata.Labels["app"]
 		hash := p.Metadata.Labels["pod-template-hash"]
 
-		if app == "" || hash == "" {
-			continue
+		if app != "" && hash != "" {
+			hashMap[app] = hash
 		}
-
-		hashMap[app] = hash // last one = latest RS
 	}
 
-	// 🔥 STEP 2: filter only latest pods
+	// filter pods
 	for _, p := range parsed.Items {
 		app := p.Metadata.Labels["app"]
 		hash := p.Metadata.Labels["pod-template-hash"]
 
-		if app == "" {
+		if app == "" || hashMap[app] != hash {
 			continue
-		}
-
-		if hashMap[app] != hash {
-			continue // ❌ skip old pods
 		}
 
 		stateCmd := exec.Command(
@@ -217,7 +212,21 @@ func ListServicesHandler(w http.ResponseWriter, r *http.Request) {
 
 	var result []map[string]interface{}
 
-	for app, pods := range serviceMap {
+	// SORT services
+	var keys []string
+	for k := range serviceMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, app := range keys {
+		pods := serviceMap[app]
+
+		// SORT pods
+		sort.Slice(pods, func(i, j int) bool {
+			return pods[i].Pod < pods[j].Pod
+		})
+
 		running := 0
 		for _, p := range pods {
 			if p.Status == "Running" {
@@ -225,11 +234,11 @@ func ListServicesHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		source := "unknown"
+		source := "manual"
 
 		for _, p := range parsed.Items {
 			if strings.HasPrefix(p.Metadata.Name, app) {
-				if val, ok := p.Metadata.Labels["source"]; ok && val != "" {
+				if val := p.Metadata.Labels["source"]; val != "" {
 					source = val
 				}
 				break
@@ -247,6 +256,25 @@ func ListServicesHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+}
+
+func DeleteServiceHandler(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+
+	if name == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+
+	cmd := exec.Command("helm", "uninstall", name, "-n", config.AppConfig.Namespace)
+	out, err := cmd.CombinedOutput()
+
+	if err != nil {
+		http.Error(w, string(out), http.StatusInternalServerError)
+		return
+	}
+
+	w.Write([]byte("service deleted"))
 }
 
 func DeletePodHandler(w http.ResponseWriter, r *http.Request) {
