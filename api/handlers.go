@@ -1,6 +1,8 @@
 package api
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"idp-platform/internal/config"
@@ -343,55 +345,52 @@ func ExecHandler(w http.ResponseWriter, r *http.Request) {
 func LogsHandler(w http.ResponseWriter, r *http.Request) {
 	pod := r.URL.Query().Get("pod")
 	if pod == "" {
-		http.Error(w, "pod required", http.StatusBadRequest)
+		http.Error(w, "pod required", 400)
 		return
 	}
 
-	cmd := exec.Command("kubectl", "logs", "-f", pod, "-n", config.AppConfig.Namespace)
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	cmd := exec.CommandContext(
+		ctx,
+		"kubectl", "logs", "-f", pod,
+		"-n", config.AppConfig.Namespace,
+	)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, "failed to get logs", 500)
 		return
 	}
 
-	err = cmd.Start()
-	if err != nil {
-		http.Error(w, err.Error(), 500)
+	if err := cmd.Start(); err != nil {
+		http.Error(w, "failed to start logs", 500)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/plain")
-	w.Header().Set("Transfer-Encoding", "chunked")
+	flusher, _ := w.(http.Flusher)
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "stream unsupported", 500)
-		return
-	}
-
-	// 🔥 detect client disconnect
-	notify := r.Context().Done()
-
-	buffer := make([]byte, 1024)
+	reader := bufio.NewReader(stdout)
 
 	for {
-		select {
-		case <-notify:
-			// ✅ user closed → kill kubectl
-			cmd.Process.Kill()
-			return
-		default:
-			n, err := stdout.Read(buffer)
-			if n > 0 {
-				w.Write(buffer[:n])
-				flusher.Flush()
-			}
-			if err != nil {
-				return
-			}
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			break
 		}
+
+		_, writeErr := w.Write(line)
+		if writeErr != nil {
+			// 🔥 CLIENT DISCONNECTED → kill process
+			cancel()
+			break
+		}
+
+		flusher.Flush()
 	}
+
+	cmd.Wait()
 }
 
 func UpdateServiceHandler(w http.ResponseWriter, r *http.Request) {
@@ -658,6 +657,123 @@ func DeployRepoHandler(w http.ResponseWriter, r *http.Request) {
 		"repo":   req.Repo,
 		"source": "repo",
 		"status": "deployed",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func DeployRepoProgressHandler(w http.ResponseWriter, r *http.Request) {
+	type Req struct {
+		Name string `json:"name"`
+		Repo string `json:"repo"`
+		Type string `json:"type"`
+	}
+
+	var req Req
+	json.NewDecoder(r.Body).Decode(&req)
+
+	if req.Name == "" || req.Repo == "" {
+		http.Error(w, "name and repo required", 400)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Transfer-Encoding", "chunked")
+
+	flusher, _ := w.(http.Flusher)
+
+	send := func(msg string) {
+		w.Write([]byte(msg + "\n"))
+		flusher.Flush()
+	}
+
+	send("Cloning repo...")
+
+	workDir := "tmp\\" + req.Name
+	exec.Command("cmd", "/C", "if exist "+workDir+" rmdir /S /Q "+workDir).Run()
+
+	cmd := exec.Command("git", "clone", req.Repo, workDir)
+	if err := cmd.Run(); err != nil {
+		send("❌ Clone failed")
+		return
+	}
+
+	send("Building image...")
+
+	image := "idp/" + req.Name + ":latest"
+	build := exec.Command("docker", "build", "-t", image, workDir)
+	if err := build.Run(); err != nil {
+		send("❌ Build failed")
+		return
+	}
+
+	send("Loading into cluster...")
+
+	load := exec.Command("minikube", "image", "load", image)
+	if err := load.Run(); err != nil {
+		send("❌ Load failed")
+		return
+	}
+
+	send("Deploying...")
+
+	cmd = exec.Command(
+		"helm", "install", req.Name, "charts/myapp",
+		"-n", config.AppConfig.Namespace,
+		"--set", "image.repository=idp/"+req.Name,
+		"--set", "image.tag=latest",
+		"--set", "type="+req.Type,
+		"--set", "env="+config.AppConfig.Env,
+		"--set", "source=repo",
+	)
+
+	if err := cmd.Run(); err != nil {
+		send("❌ Deploy failed")
+		return
+	}
+
+	send("Waiting for pod...")
+
+	for i := 0; i < 20; i++ {
+		out, _ := exec.Command(
+			"kubectl", "get", "pods",
+			"-n", config.AppConfig.Namespace,
+			"-l", "app="+req.Name,
+			"-o", "jsonpath={.items[*].status.phase}",
+		).Output()
+
+		if strings.Contains(string(out), "Running") {
+			send("✅ Running")
+			break
+		}
+	}
+
+	exec.Command("cmd", "/C", "rmdir", "/S", "/Q", workDir).Run()
+}
+
+func RestartServiceHandler(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		http.Error(w, "name required", 400)
+		return
+	}
+
+	cmd := exec.Command(
+		"kubectl", "rollout", "restart",
+		"deployment", name,
+		"-n", config.AppConfig.Namespace,
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		http.Error(w, string(output), 500)
+		return
+	}
+
+	resp := map[string]string{
+		"name":   name,
+		"status": "restarted",
 	}
 
 	w.Header().Set("Content-Type", "application/json")

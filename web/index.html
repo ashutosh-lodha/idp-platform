@@ -13,6 +13,7 @@
     .green { color: green; font-weight: bold; }
     .yellow { color: orange; font-weight: bold; }
     .red { color: red; font-weight: bold; }
+    .blue { color: dodgerblue; font-weight: bold; }
 
     .badge {
       padding: 2px 6px;
@@ -38,11 +39,26 @@
       border-radius: 8px;
       padding: 10px;
     }
+
+    /* ✅ TOAST */
+    #toast {
+      display:none;
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #333;
+      color: white;
+      padding: 10px 15px;
+      border-radius: 6px;
+      z-index: 2000;
+    }
   </style>
 </head>
 <body>
 
 <h2>IDP Dashboard</h2>
+
+<div id="toast"></div>
 
 <div id="controls">
   <select id="mode" onchange="toggleMode()">
@@ -87,21 +103,9 @@
   <tbody id="tableBody"></tbody>
 </table>
 
-<!-- FIXED MODAL -->
+<!-- LOGS MODAL -->
 <div id="logsModal">
-
-  <!-- FIXED HEADER -->
-  <div style="
-    position: sticky;
-    top: 0;
-    background: black;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid #333;
-    padding-bottom: 8px;
-    z-index: 10;
-  ">
+  <div style="position: sticky; top:0; background:black; display:flex; justify-content:space-between;">
     <strong>Logs</strong>
     <div>
       <button onclick="closeLogs()">Stop</button>
@@ -109,50 +113,115 @@
     </div>
   </div>
 
-  <!-- ONLY THIS SCROLLS -->
-  <div style="
-    height: calc(100% - 50px);
-    overflow-y: auto;
-    margin-top: 10px;
-  ">
-    <pre id="logsContent" style="margin:0;"></pre>
+  <div style="height:90%; overflow:auto;">
+    <pre id="logsContent"></pre>
   </div>
-
 </div>
 
 <script>
 
-// (ALL YOUR EXISTING JS — UNCHANGED)
+function showToast(msg, color="#333") {
+  const t = document.getElementById("toast");
+  t.innerText = msg;
+  t.style.background = color;
+  t.style.display = "block";
+  setTimeout(()=>t.style.display="none", 2500);
+}
 
 function toggleMode() {
   const mode = document.getElementById("mode").value;
-  document.getElementById("imageFields").style.display =
-    mode === "image" ? "block" : "none";
-  document.getElementById("repoFields").style.display =
-    mode === "repo" ? "block" : "none";
+  imageFields.style.display = mode==="image"?"block":"none";
+  repoFields.style.display = mode==="repo"?"block":"none";
 }
 
-function getStatusClass(pods) {
-  let running = pods.filter(p => p.status === "Running").length;
-  if (running === pods.length) return "green";
-  if (running > 0) return "yellow";
-  return "red";
+/* ✅ HEALTH ENGINE */
+function getHealth(s) {
+  const statuses = s.pods.map(p => p.status);
+
+  // 🔵 still starting
+  if (statuses.includes("Pending") || statuses.includes("ContainerCreating")) {
+    return { text: "Deploying", cls: "blue" };
+  }
+
+  // 🔴 real failure
+  if (statuses.some(st =>
+    st.includes("Error") ||
+    st.includes("CrashLoopBackOff") ||
+    st.includes("ImagePullBackOff")
+  )) {
+    return { text: "Failed", cls: "red" };
+  }
+
+  // 🟢 healthy
+  if (s.running === s.replicas) {
+    return { text: "Healthy", cls: "green" };
+  }
+
+  // 🟡 partial
+  if (s.running > 0) {
+    return { text: "Degraded", cls: "yellow" };
+  }
+
+  // fallback
+  return { text: "Deploying", cls: "blue" };
+}
+
+async function deployUnified() {
+  const mode = modeEl.value;
+  const name = nameEl.value;
+  const type = typeEl.value;
+  const replicas = parseInt(replicasEl.value);
+
+  let env = {};
+  const envInput = envEl.value;
+  if (envInput) {
+    envInput.split(",").forEach(p=>{
+      const [k,v]=p.split("=");
+      if(k&&v) env[k.trim()]=v.trim();
+    });
+  }
+
+  if (mode==="image") {
+    let image = imageEl.value;
+    if (!image.includes(":")) image+=":latest";
+
+    showToast("Deploying...", "#555");
+
+    const res = await fetch("/provision", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name,image,replicas,type,env})
+    });
+
+    res.ok ? showToast("✅ Deployed","green") : showToast("❌ Failed","red");
+
+  } else {
+    const repo = repoEl.value;
+
+    showToast("Deploying repo...", "#555");
+
+    const res = await fetch("/deploy-repo", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name,repo,type})
+    });
+
+    res.ok ? showToast("✅ Repo deployed","blue") : showToast("❌ Failed","red");
+  }
+
+  loadServices();
 }
 
 async function deleteService(name) {
   if (!confirm("Delete service?")) return;
 
   const res = await fetch(`/delete?name=${name}`);
-  if (!res.ok) {
-    const text = await res.text();
-    alert("Delete failed: " + text);
-  }
+  if (!res.ok) showToast("Delete failed","red");
 
   loadServices();
 }
 
 function deletePod(pod) {
-  if (!confirm("Delete pod?")) return;
   fetch(`/delete-pod?pod=${pod}`).then(loadServices);
 }
 
@@ -160,194 +229,138 @@ function execPod(pod) {
   fetch(`/exec?pod=${pod}`);
 }
 
-let logReader = null;
+let logReader=null;
 
-function showLogs(pod) {
-  const modal = document.getElementById("logsModal");
-  const content = document.getElementById("logsContent");
+function showLogs(pod){
+  logsModal.style.display="block";
+  logsContent.innerText="Connecting...\n";
 
-  modal.style.display = "block";
-  content.innerText = "Connecting...\n";
+  fetch(`/logs?pod=${pod}`).then(res=>{
+    logReader=res.body.getReader();
+    const dec=new TextDecoder();
 
-  fetch(`/logs?pod=${pod}`).then(response => {
-    logReader = response.body.getReader();
-    const decoder = new TextDecoder();
-
-    function read() {
-      logReader.read().then(({ done, value }) => {
-        if (done) return;
-
-        content.innerText += decoder.decode(value);
-        content.scrollTop = content.scrollHeight;
-
+    function read(){
+      logReader.read().then(({done,value})=>{
+        if(done) return;
+        logsContent.innerText+=dec.decode(value);
+        logsContent.scrollTop=logsContent.scrollHeight;
         read();
       });
     }
-
     read();
   });
 }
 
-function closeLogs() {
-  document.getElementById("logsModal").style.display = "none";
-  document.getElementById("logsContent").innerText = "";
-
-  if (logReader) {
-    logReader.cancel();
-    logReader = null;
-  }
+function closeLogs(){
+  logsModal.style.display="none";
+  logsContent.innerText="";
+  if(logReader){logReader.cancel();logReader=null;}
 }
-async function deployUnified() {
-  const mode = document.getElementById("mode").value;
-  const name = document.getElementById("name").value;
-  const type = document.getElementById("type").value;
-  const replicas = parseInt(document.getElementById("replicas").value);
 
-  const envInput = document.getElementById("env").value;
-  const env = {};
+async function updateService(name){
+  const replicas=prompt("Replicas (1-5)");
+  if(!replicas) return;
 
-  if (envInput) {
-    envInput.split(",").forEach(pair => {
-      const [k, v] = pair.split("=");
-      if (k && v) env[k.trim()] = v.trim();
-    });
-  }
+  await fetch("/service",{
+    method:"PUT",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({name,replicas:parseInt(replicas)})
+  });
 
-  if (mode === "image") {
-    let image = document.getElementById("image").value;
-    if (!image.includes(":")) image += ":latest";
+  loadServices();
+}
 
-    await fetch("/provision", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ name, image, replicas, type, env })
-    });
+async function restartService(name) {
+  if (!confirm("Restart service?")) return;
 
+  showToast("Restarting...", "#555");
+
+  const res = await fetch(`/restart?name=${name}`);
+
+  if (res.ok) {
+    showToast("🔄 Restarted", "blue");
   } else {
-    const repo = document.getElementById("repo").value;
-
-    await fetch("/deploy-repo", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ name, repo, type })
-    });
+    showToast("❌ Failed", "red");
   }
 
   loadServices();
 }
 
-async function updateService(name) {
-  const replicas = prompt("Replicas (1-5)");
-  if (!replicas) return;
+async function loadServices(){
+  const services=await fetch("/services").then(r=>r.json());
 
-  await fetch("/service", {
-    method: "PUT",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({ name, replicas: parseInt(replicas) })
-  });
+  let metrics=[];
+  try{metrics=await fetch("/metrics").then(r=>r.json());}catch{}
 
-  loadServices();
-}
+  const tbody=document.getElementById("tableBody");
 
-async function loadServices() {
-  const res = await fetch("/services");
-  const services = await res.json();
+  let rows=[];
 
-  let metrics = [];
-  try {
-    const m = await fetch("/metrics");
-    metrics = await m.json();
-  } catch {}
+  services.sort((a,b)=>a.name.localeCompare(b.name));
 
-  const tbody = document.getElementById("tableBody");
+  services.forEach(s=>{
+    s.pods.sort((a,b)=>a.pod.localeCompare(b.pod));
 
-  // keep existing rows (no full wipe)
-  const existingRows = {};
+    const health=getHealth(s);
 
-  Array.from(tbody.children).forEach(row => {
-    if (row.dataset && row.dataset.key) {
-      existingRows[row.dataset.key] = row;
-    }
-  });
+    let totalCPU=0,totalMemory=0;
 
-  services.sort((a, b) => a.name.localeCompare(b.name));
-
-  let newRows = [];
-
-  services.forEach(s => {
-    s.pods.sort((a, b) => a.pod.localeCompare(b.pod));
-
-    let totalCPU = 0;
-    let totalMemory = 0;
-
-    s.pods.forEach(p => {
-      const m = metrics.find(x => x.pod === p.pod);
-      if (m) {
-        totalCPU += parseInt(m.cpu || "0");
-        totalMemory += parseInt(m.memory || "0");
+    s.pods.forEach(p=>{
+      const m=metrics.find(x=>x.pod===p.pod);
+      if(m){
+        totalCPU+=parseInt(m.cpu||0);
+        totalMemory+=parseInt(m.memory||0);
       }
     });
 
-    const badgeClass = s.source === "repo" ? "repo" : "manual";
-
-    const serviceKey = "svc-" + s.name;
-
-    let serviceRow = existingRows[serviceKey];
-    if (!serviceRow) {
-      serviceRow = document.createElement("tr");
-      serviceRow.dataset.key = serviceKey;
-    }
-
-    serviceRow.innerHTML = `
-      <td>${s.name} <span class="badge ${badgeClass}">${s.source}</span></td>
-      <td class="${getStatusClass(s.pods)}">${s.running}/${s.replicas}</td>
-      <td>${s.replicas}</td>
-      <td>${totalCPU}m</td>
-      <td>${totalMemory}Mi</td>
-      <td>
-        <button onclick="window.open('http://${s.name}.127.0.0.1.nip.io')">Open</button>
-        <button onclick="deleteService('${s.name}')">Delete</button>
-        <button onclick="updateService('${s.name}')">Update</button>
-      </td>
-    `;
-
-    newRows.push(serviceRow);
-
-    // PODS
-    s.pods.forEach(p => {
-      const podKey = "pod-" + p.pod;
-
-      let podRow = existingRows[podKey];
-      if (!podRow) {
-        podRow = document.createElement("tr");
-        podRow.dataset.key = podKey;
-      }
-
-      const m = metrics.find(x => x.pod === p.pod) || {};
-
-      podRow.innerHTML = `
-        <td>↳ ${p.pod}</td>
-        <td>${p.status}</td>
-        <td>-</td>
-        <td>${m.cpu || "-"}</td>
-        <td>${m.memory || "-"}</td>
+    rows.push(`
+      <tr>
+        <td>${s.name} <span class="badge ${s.source}">${s.source}</span></td>
+        <td class="${health.cls}">${health.text}</td>
+        <td>${s.running}/${s.replicas}</td>
+        <td>${totalCPU}m</td>
+        <td>${totalMemory}Mi</td>
         <td>
-          <button onclick="execPod('${p.pod}')">Exec</button>
-          <button onclick="showLogs('${p.pod}')">Logs</button>
-          <button onclick="deletePod('${p.pod}')">Delete Pod</button>
+          <button onclick="window.open('http://${s.name}.127.0.0.1.nip.io')">Open</button>
+          <button onclick="deleteService('${s.name}')">Delete</button>
+          <button onclick="restartService('${s.name}')">Restart</button>
+          <button onclick="updateService('${s.name}')">Update</button>
         </td>
-      `;
+      </tr>
+    `);
 
-      newRows.push(podRow);
+    s.pods.forEach(p=>{
+      const m=metrics.find(x=>x.pod===p.pod)||{};
+      rows.push(`
+        <tr>
+          <td>↳ ${p.pod}</td>
+          <td>${p.status}</td>
+          <td>-</td>
+          <td>${m.cpu||"-"}</td>
+          <td>${m.memory||"-"}</td>
+          <td>
+            <button onclick="execPod('${p.pod}')">Exec</button>
+            <button onclick="showLogs('${p.pod}')">Logs</button>
+            <button onclick="deletePod('${p.pod}')">Delete Pod</button>
+          </td>
+        </tr>
+      `);
     });
   });
 
-  // replace DOM in one go (no flicker)
-  tbody.replaceChildren(...newRows);
+  tbody.innerHTML=rows.join("");
 }
+
+const modeEl=document.getElementById("mode");
+const nameEl=document.getElementById("name");
+const imageEl=document.getElementById("image");
+const repoEl=document.getElementById("repo");
+const typeEl=document.getElementById("type");
+const replicasEl=document.getElementById("replicas");
+const envEl=document.getElementById("env");
 
 loadServices();
-setInterval(loadServices, 5000);
+setInterval(loadServices,5000);
 
 </script>
 
