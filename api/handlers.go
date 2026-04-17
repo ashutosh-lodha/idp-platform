@@ -779,3 +779,39 @@ func RestartServiceHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
+
+func RollbackServiceHandler(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+
+	if name == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+
+	// check exists
+	check := exec.Command("helm", "status", name, "-n", config.AppConfig.Namespace)
+	if err := check.Run(); err != nil {
+		http.Error(w, "service not found", http.StatusBadRequest)
+		return
+	}
+
+	// rollback to previous revision (0 = previous)
+	cmd := exec.Command(
+		"helm", "rollback", name, "0",
+		"-n", config.AppConfig.Namespace,
+	)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		http.Error(w, string(out), http.StatusInternalServerError)
+		return
+	}
+
+	resp := map[string]string{
+		"name":   name,
+		"status": "rolled back",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
