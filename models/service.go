@@ -7,4 +7,5 @@ type ServiceContract struct {
 	Replicas int               `json:"replicas"`
 	Expose   bool              `json:"expose"`
 	Env      map[string]string `json:"env"`
+	Secrets  map[string]string `json:"secrets"`
 }

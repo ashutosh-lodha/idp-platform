@@ -8,11 +8,14 @@ metadata:
     env: {{ .Values.env }}
     managed-by: idp
     source: {{ .Values.source }}
+
 spec:
   replicas: {{ .Values.replicaCount }}
+
   selector:
     matchLabels:
       app: {{ .Release.Name }}
+
   template:
     metadata:
       labels:
@@ -20,17 +23,53 @@ spec:
         env: {{ .Values.env }}
         managed-by: idp
         source: {{ .Values.source }}
+
     spec:
       containers:
         - name: {{ .Release.Name }}
+
           image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
           imagePullPolicy: Never
+
           ports:
             - containerPort: 80
+
+          # ENV VARIABLES (optional)
+          {{- if .Values.envVars }}
           env:
-            {{- range $key, $value := .Values.envVars }}
+          {{- range $key, $value := .Values.envVars }}
             - name: {{ $key }}
-              value: "{{ $value }}"
-            {{- end }}
+              value: {{ $value | quote }}
+          {{- end }}
+          {{- end }}
+
+          # SECRETS (optional - FIXED)
+          {{- if .Values.secrets }}
+          envFrom:
+            - secretRef:
+                name: {{ .Release.Name }}-secret
+          {{- end }}
+
+          # HEALTH CHECKS
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 2
+            periodSeconds: 5
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          # RESOURCES (fixed indentation)
           resources:
-            {{- toYaml .Values.resources | nindent 12 }}
+            limits:
+              cpu: {{ .Values.resources.limits.cpu }}
+              memory: {{ .Values.resources.limits.memory }}
+            requests:
+              cpu: {{ .Values.resources.requests.cpu }}
+              memory: {{ .Values.resources.requests.memory }}

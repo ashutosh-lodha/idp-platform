@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 )
 
 type ServiceInfo struct {
@@ -43,7 +42,7 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 		req.Expose = true
 	}
 
-	// GUARDRAILS
+	// ================= GUARDRAILS =================
 
 	if req.Name == "" {
 		http.Error(w, "name required", http.StatusBadRequest)
@@ -79,18 +78,28 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// split image
+	// ================= IMAGE SPLIT =================
+
 	parts := strings.Split(req.Image, ":")
 	repo := parts[0]
 	tag := parts[1]
 
-	// 🔥 ENV SUPPORT
+	// ================= ENV SUPPORT =================
+
 	var envArgs []string
 	for k, v := range req.Env {
 		envArgs = append(envArgs, "--set", fmt.Sprintf("envVars.%s=%s", k, v))
 	}
 
-	// install (converted to args)
+	// ================= SECRET SUPPORT =================
+
+	var secretArgs []string
+	for k, v := range req.Secrets {
+		secretArgs = append(secretArgs, "--set", fmt.Sprintf("secrets.%s=%s", k, v))
+	}
+
+	// ================= HELM INSTALL =================
+
 	cmdArgs := []string{
 		"install", req.Name, "charts/myapp",
 		"-n", config.AppConfig.Namespace,
@@ -102,7 +111,9 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 		"--set", "source=manual",
 	}
 
+	// append env + secrets
 	cmdArgs = append(cmdArgs, envArgs...)
+	cmdArgs = append(cmdArgs, secretArgs...)
 
 	cmd := exec.Command("helm", cmdArgs...)
 
@@ -112,38 +123,14 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// wait for pod readiness
-	status := "pending"
-
-	for i := 0; i < 15; i++ {
-		checkPods := exec.Command(
-			"kubectl", "get", "pods",
-			"-n", config.AppConfig.Namespace,
-			"-l", "app="+req.Name,
-			"-o", "jsonpath={.items[*].status.phase}",
-		)
-
-		out, _ := checkPods.Output()
-		podStatus := string(out)
-
-		if strings.Contains(podStatus, "Running") {
-			status = "running"
-			break
-		}
-		if strings.Contains(podStatus, "Error") || strings.Contains(podStatus, "CrashLoopBackOff") {
-			status = "failed"
-			break
-		}
-
-		time.Sleep(1 * time.Second)
-	}
+	// ================= RESPONSE =================
 
 	resp := map[string]interface{}{
 		"name":     req.Name,
 		"type":     req.Type,
 		"image":    req.Image,
 		"replicas": req.Replicas,
-		"status":   status,
+		"status":   "deploying",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -177,31 +164,54 @@ func ListServicesHandler(w http.ResponseWriter, r *http.Request) {
 		Items []Pod `json:"items"`
 	}
 
-	err = json.Unmarshal(out, &parsed)
-	if err != nil {
-		http.Error(w, "failed to parse kubectl output", http.StatusInternalServerError)
-		return
-	}
+	json.Unmarshal(out, &parsed)
 
 	serviceMap := make(map[string][]ServiceInfo)
+	hashMap := make(map[string]string)
 
+	// 🔥 STEP 1: get latest pod hash per app
 	for _, p := range parsed.Items {
 		app := p.Metadata.Labels["app"]
-		source := p.Metadata.Labels["source"]
+		hash := p.Metadata.Labels["pod-template-hash"]
+
+		if app == "" || hash == "" {
+			continue
+		}
+
+		hashMap[app] = hash // last one = latest RS
+	}
+
+	// 🔥 STEP 2: filter only latest pods
+	for _, p := range parsed.Items {
+		app := p.Metadata.Labels["app"]
+		hash := p.Metadata.Labels["pod-template-hash"]
 
 		if app == "" {
 			continue
 		}
 
-		if source == "" {
-			source = "unknown" // fallback safety
+		if hashMap[app] != hash {
+			continue // ❌ skip old pods
+		}
+
+		stateCmd := exec.Command(
+			"kubectl", "get", "pod", p.Metadata.Name,
+			"-n", config.AppConfig.Namespace,
+			"-o", "jsonpath={.status.containerStatuses[0].state.waiting.reason}",
+		)
+
+		stateOut, _ := stateCmd.Output()
+		state := strings.TrimSpace(string(stateOut))
+
+		status := p.Status.Phase
+		if state != "" {
+			status = state
 		}
 
 		serviceMap[app] = append(serviceMap[app], ServiceInfo{
 			Name:   app,
 			Pod:    p.Metadata.Name,
-			Status: p.Status.Phase,
-			URL:    "", // FIX: URL should not store source
+			Status: status,
 		})
 	}
 
@@ -216,15 +226,13 @@ func ListServicesHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		source := "unknown"
-		if len(pods) > 0 {
-			// extract from first pod again (clean way)
-			for _, p := range parsed.Items {
-				if strings.HasPrefix(p.Metadata.Name, app) {
-					if val, ok := p.Metadata.Labels["source"]; ok && val != "" {
-						source = val
-					}
-					break
+
+		for _, p := range parsed.Items {
+			if strings.HasPrefix(p.Metadata.Name, app) {
+				if val, ok := p.Metadata.Labels["source"]; ok && val != "" {
+					source = val
 				}
+				break
 			}
 		}
 
@@ -241,23 +249,23 @@ func ListServicesHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
-func DeleteHandler(w http.ResponseWriter, r *http.Request) {
-	name := r.URL.Query().Get("name")
+func DeletePodHandler(w http.ResponseWriter, r *http.Request) {
+	pod := r.URL.Query().Get("pod")
 
-	if name == "" {
-		http.Error(w, "name required", http.StatusBadRequest)
+	if pod == "" {
+		http.Error(w, "pod required", http.StatusBadRequest)
 		return
 	}
 
-	cmd := exec.Command("helm", "uninstall", name, "-n", config.AppConfig.Namespace)
+	cmd := exec.Command("kubectl", "delete", "pod", pod, "-n", config.AppConfig.Namespace)
+	out, err := cmd.CombinedOutput()
 
-	output, err := cmd.CombinedOutput()
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Error: %s\n%s", err.Error(), string(output)), 500)
+		http.Error(w, string(out), 500)
 		return
 	}
 
-	fmt.Fprintf(w, "Deleted:\n%s", string(output))
+	w.Write([]byte("pod deleted"))
 }
 
 func ExecHandler(w http.ResponseWriter, r *http.Request) {
@@ -304,35 +312,6 @@ func ExecHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Terminal opened"))
 }
 
-func OpenHandler(w http.ResponseWriter, r *http.Request) {
-	name := r.URL.Query().Get("name")
-
-	if name == "" {
-		http.Error(w, "name required", http.StatusBadRequest)
-		return
-	}
-
-	cmd := exec.Command("minikube", "service", name, "-n", config.AppConfig.Namespace, "--url")
-
-	outPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-
-	if err := cmd.Start(); err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-
-	buf := make([]byte, 1024)
-	n, _ := outPipe.Read(buf)
-
-	url := strings.TrimSpace(string(buf[:n]))
-
-	w.Write([]byte(url))
-}
-
 func LogsHandler(w http.ResponseWriter, r *http.Request) {
 	pod := r.URL.Query().Get("pod")
 
@@ -372,9 +351,9 @@ func UpdateServiceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// check service exists
-	checkCmd := exec.Command("helm", "status", req.Name, "-n", config.AppConfig.Namespace)
-	if err := checkCmd.Run(); err != nil {
+	// check exists
+	check := exec.Command("helm", "status", req.Name, "-n", config.AppConfig.Namespace)
+	if err := check.Run(); err != nil {
 		http.Error(w, "service does not exist", http.StatusBadRequest)
 		return
 	}
@@ -389,7 +368,6 @@ func UpdateServiceHandler(w http.ResponseWriter, r *http.Request) {
 
 	sourceOut, _ := sourceCmd.Output()
 	source := strings.TrimSpace(string(sourceOut))
-
 	if source == "" {
 		source = "manual"
 	}
@@ -397,22 +375,46 @@ func UpdateServiceHandler(w http.ResponseWriter, r *http.Request) {
 	var repo, tag string
 
 	if source == "repo" {
-		// ✅ FORCE repo image (CRITICAL FIX)
+		// FORCE repo image (no user override)
 		repo = "idp/" + req.Name
 		tag = "latest"
 	} else {
-		// manual → allow user image
-		if !strings.Contains(req.Image, ":") {
-			http.Error(w, "image must include tag", http.StatusBadRequest)
-			return
-		}
+		if req.Image == "" {
+			// fetch existing image from cluster
+			imgCmd := exec.Command(
+				"kubectl", "get", "deployment", req.Name,
+				"-n", config.AppConfig.Namespace,
+				"-o", "jsonpath={.spec.template.spec.containers[0].image}",
+			)
 
-		parts := strings.Split(req.Image, ":")
-		repo = parts[0]
-		tag = parts[1]
+			imgOut, err := imgCmd.Output()
+			if err != nil {
+				http.Error(w, "failed to get existing image", http.StatusInternalServerError)
+				return
+			}
+
+			existingImage := strings.TrimSpace(string(imgOut))
+
+			parts := strings.Split(existingImage, ":")
+			repo = parts[0]
+			if len(parts) > 1 {
+				tag = parts[1]
+			} else {
+				tag = "latest"
+			}
+
+		} else {
+			if !strings.Contains(req.Image, ":") {
+				http.Error(w, "image must include tag", http.StatusBadRequest)
+				return
+			}
+
+			parts := strings.Split(req.Image, ":")
+			repo = parts[0]
+			tag = parts[1]
+		}
 	}
 
-	// default type safety
 	if req.Type == "" {
 		req.Type = "web"
 	}
@@ -429,9 +431,9 @@ func UpdateServiceHandler(w http.ResponseWriter, r *http.Request) {
 		"--set", "source="+source,
 	)
 
-	output, err := cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		http.Error(w, string(output), http.StatusInternalServerError)
+		http.Error(w, string(out), http.StatusInternalServerError)
 		return
 	}
 
