@@ -40,6 +40,22 @@
       padding: 10px;
     }
 
+    /* ✅ FIXED HISTORY MODAL */
+    #historyModal {
+      display: none;
+      position: fixed;
+      top: 10%;
+      left: 10%;
+      width: 80%;
+      height: 70%;
+      background: white;
+      z-index: 2000;
+      padding: 15px;
+      overflow: auto;
+      border-radius: 8px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.5);
+    }
+
     #toast {
       display:none;
       position: fixed;
@@ -49,19 +65,19 @@
       color: white;
       padding: 10px 15px;
       border-radius: 6px;
-      z-index: 2000;
+      z-index: 3000;
     }
   </style>
 </head>
+
 <body>
 
 <h2>IDP Dashboard</h2>
 
 <div id="toast"></div>
 
+<!-- CONTROLS (UNCHANGED) -->
 <div id="controls">
-
-  <!-- ✅ TEMPLATE DROPDOWN ADDED -->
   <select id="template" onchange="applyTemplate()">
     <option value="">Custom</option>
     <option value="nginx">Nginx (Web)</option>
@@ -112,6 +128,7 @@
   <tbody id="tableBody"></tbody>
 </table>
 
+<!-- LOGS MODAL -->
 <div id="logsModal">
   <div style="position: sticky; top:0; background:black; display:flex; justify-content:space-between;">
     <strong>Logs</strong>
@@ -120,38 +137,46 @@
       <button onclick="closeLogs()">✖</button>
     </div>
   </div>
-
   <div style="height:90%; overflow:auto;">
     <pre id="logsContent"></pre>
   </div>
 </div>
 
+<!-- ✅ FIXED HISTORY MODAL (OUTSIDE logsModal) -->
+<div id="historyModal">
+  <div style="display:flex; justify-content:space-between;">
+    <h3>History</h3>
+    <button onclick="closeHistory()">✖</button>
+  </div>
+  <pre id="historyContent"></pre>
+</div>
+
 <script>
 
-/* ALL YOUR ORIGINAL JS KEPT — ONLY TEMPLATE ADDED */
+/* ONLY IMPORTANT FUNCTIONS */
 
-function applyTemplate() {
-  const t = document.getElementById("template").value;
+async function showHistory(name) {
+  const res = await fetch(`/history?name=${name}`);
+  const data = await res.json();
 
-  if (t === "nginx") {
-    imageEl.value = "nginx:latest";
-    typeEl.value = "web";
-  }
-  else if (t === "node") {
-    imageEl.value = "node:18";
-    typeEl.value = "api";
-  }
-  else if (t === "python") {
-    imageEl.value = "python:3.10";
-    typeEl.value = "api";
-  }
-  else if (t === "worker") {
-    imageEl.value = "busybox";
-    typeEl.value = "worker";
-  }
+  historyModal.style.display = "block";
+
+  let output = "";
+
+  data.forEach(h => {
+    output += `Revision: ${h.revision}\n`;
+    output += `Status: ${h.status}\n`;
+    output += `Updated: ${h.updated}\n`;
+    output += "----------------------\n";
+  });
+
+  historyContent.innerText = output;
 }
 
-/* REST OF YOUR FILE UNCHANGED (exact copy preserved) */
+function closeHistory() {
+  historyModal.style.display = "none";
+  historyContent.innerText = "";
+}
 
 function showToast(msg, color="#333") {
   const t = document.getElementById("toast");
@@ -364,6 +389,7 @@ async function loadServices(){
           <button onclick="restartService('${s.name}')">Restart</button>
           <button onclick="updateService('${s.name}')">Update</button>
           <button onclick="rollbackService('${s.name}')">Rollback</button>
+          <button onclick="showHistory('${s.name}')">History</button>
         </td>
       </tr>
     `);
@@ -421,6 +447,8 @@ const repoEl=document.getElementById("repo");
 const typeEl=document.getElementById("type");
 const replicasEl=document.getElementById("replicas");
 const envEl=document.getElementById("env");
+const historyModal = document.getElementById("historyModal");
+const historyContent = document.getElementById("historyContent");
 
 loadServices();
 setInterval(loadServices,5000);

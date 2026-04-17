@@ -16,4 +16,5 @@ func RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/deploy-repo-progress", DeployRepoProgressHandler)
 	mux.HandleFunc("/restart", RestartServiceHandler)
 	mux.HandleFunc("/rollback", RollbackServiceHandler)
+	mux.HandleFunc("/history", ServiceHistoryHandler)
 }

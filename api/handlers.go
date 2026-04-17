@@ -815,3 +815,55 @@ func RollbackServiceHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
+
+func ServiceHistoryHandler(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+
+	if name == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+
+	cmd := exec.Command(
+		"helm", "history", name,
+		"-n", config.AppConfig.Namespace,
+	)
+
+	out, err := cmd.Output()
+	if err != nil {
+		http.Error(w, "failed to fetch history", http.StatusInternalServerError)
+		return
+	}
+
+	lines := strings.Split(string(out), "\n")
+
+	var result []map[string]string
+
+	for i, line := range lines {
+		if i == 0 || strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		fields := strings.Fields(line)
+
+		if len(fields) < 6 {
+			continue
+		}
+
+		revision := fields[0]
+
+		// full date (5 parts)
+		updated := strings.Join(fields[1:6], " ")
+
+		status := fields[6]
+
+		result = append(result, map[string]string{
+			"revision": revision,
+			"updated":  updated,
+			"status":   status,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
