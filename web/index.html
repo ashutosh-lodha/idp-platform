@@ -78,13 +78,6 @@
 
 <!-- CONTROLS (UNCHANGED) -->
 <div id="controls">
-  <select id="template" onchange="applyTemplate()">
-    <option value="">Custom</option>
-    <option value="nginx">Nginx (Web)</option>
-    <option value="node">Node API</option>
-    <option value="python">Python App</option>
-    <option value="worker">Worker</option>
-  </select>
 
   <select id="mode" onchange="toggleMode()">
     <option value="image">Image</option>
@@ -450,30 +443,6 @@ async function loadServices(){
   });
 
   tbody.innerHTML=rows.join("");
-}
-
-function applyTemplate() {
-  const t = document.getElementById("template").value;
-
-  if (t === "nginx") {
-    imageEl.value = "nginx:latest";
-    typeEl.value = "web";
-  }
-
-  else if (t === "node") {
-    imageEl.value = "node:18";
-    typeEl.value = "api";
-  }
-
-  else if (t === "python") {
-    imageEl.value = "python:3.10";
-    typeEl.value = "api";
-  }
-
-  else if (t === "worker") {
-    imageEl.value = "busybox";
-    typeEl.value = "worker";
-  }
 }
 
 const modeEl=document.getElementById("mode");
