@@ -29,10 +29,10 @@ spec:
         - name: {{ .Release.Name }}
 
           image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
-          imagePullPolicy: Never
+          imagePullPolicy: IfNotPresent
 
           ports:
-            - containerPort: 80
+            - containerPort: {{ .Values.service.port }}
 
           # ENV VARIABLES (optional)
           {{- if .Values.envVars }}
@@ -54,14 +54,14 @@ spec:
           readinessProbe:
             httpGet:
               path: /
-              port: 80
+              port: {{ .Values.service.port }}
             initialDelaySeconds: 2
             periodSeconds: 5
 
           livenessProbe:
             httpGet:
               path: /
-              port: 80
+              port: {{ .Values.service.port }}
             initialDelaySeconds: 5
             periodSeconds: 10
 

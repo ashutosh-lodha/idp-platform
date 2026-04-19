@@ -221,42 +221,78 @@ async function deployUnified() {
 
   let env = {};
   const envInput = envEl.value;
+
   if (envInput) {
-    envInput.split(",").forEach(p=>{
-      const [k,v]=p.split("=");
-      if(k&&v) env[k.trim()]=v.trim();
+    envInput.split(",").forEach(p => {
+      const [k, v] = p.split("=");
+      if (k && v) env[k.trim()] = v.trim();
     });
   }
 
-  if (mode==="image") {
+  // 🔥 CREATE TEMP SERVICE ENTRY IMMEDIATELY
+  const tbody = document.getElementById("tableBody");
+
+  tbody.innerHTML = `
+    <tr>
+      <td>${name} <span class="badge repo">repo</span></td>
+      <td class="blue">Deploying...</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+      <td>Live logs below</td>
+    </tr>
+  ` + tbody.innerHTML;
+
+  if (mode === "image") {
     let image = imageEl.value;
-    if (!image.includes(":")) image+=":latest";
+    if (!image.includes(":")) image += ":latest";
 
     showToast("Deploying...", "#555");
 
     const res = await fetch("/provision", {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({name,image,replicas,type,env})
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, image, replicas, type, env })
     });
 
-    res.ok ? showToast("✅ Deployed","green") : showToast("❌ Failed","red");
+    res.ok ? showToast("✅ Deployed", "green") : showToast("❌ Failed", "red");
 
-  } else {
-    const repo = repoEl.value;
-
-    showToast("Deploying repo...", "#555");
-
-    const res = await fetch("/deploy-repo", {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({name,repo,type})
-    });
-
-    res.ok ? showToast("✅ Repo deployed","blue") : showToast("❌ Failed","red");
+    loadServices();
+    return;
   }
 
-  loadServices();
+  // STREAMING DEPLOY (CORE FIX)
+  const repo = repoEl.value;
+
+  logsModal.style.display = "block";
+  logsContent.innerText = "Starting deployment...\n";
+
+  const res = await fetch("/deploy-repo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, repo, type })
+  });
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+
+  function read() {
+    reader.read().then(({ done, value }) => {
+      if (done) {
+        showToast("Finished", "blue");
+        loadServices();
+        return;
+      }
+
+      const chunk = decoder.decode(value);
+      logsContent.innerText += chunk;
+      logsContent.scrollTop = logsContent.scrollHeight;
+
+      read();
+    });
+  }
+
+  read();
 }
 
 async function deleteService(name) {

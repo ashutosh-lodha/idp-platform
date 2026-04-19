@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 type ServiceInfo struct {
@@ -268,6 +270,7 @@ func DeleteServiceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ---------------- HELM DELETE (UNCHANGED) ----------------
 	cmd := exec.Command("helm", "uninstall", name, "-n", config.AppConfig.Namespace)
 	out, err := cmd.CombinedOutput()
 
@@ -276,6 +279,14 @@ func DeleteServiceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ---------------- TMP CLEANUP (NEW - SAFE ADDITION) ----------------
+	workDir := "tmp/" + name
+	winPath := strings.ReplaceAll(workDir, "/", "\\")
+
+	cleanCmd := exec.Command("cmd", "/C", "if exist "+winPath+" rmdir /S /Q "+winPath)
+	_ = cleanCmd.Run() // ignore error (don't break existing flow)
+
+	// ---------------- RESPONSE (UNCHANGED) ----------------
 	w.Write([]byte("service deleted"))
 }
 
@@ -558,182 +569,195 @@ func DeployRepoHandler(w http.ResponseWriter, r *http.Request) {
 	type Req struct {
 		Name string `json:"name"`
 		Repo string `json:"repo"`
-		Type string `json:"type"`
 	}
-
-	var req Req
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil {
-		http.Error(w, "invalid json", http.StatusBadRequest)
-		return
-	}
-
-	if req.Name == "" || req.Repo == "" {
-		http.Error(w, "name and repo required", http.StatusBadRequest)
-		return
-	}
-
-	if req.Type == "" {
-		req.Type = "web"
-	}
-
-	// prevent duplicate
-	check := exec.Command("helm", "status", req.Name, "-n", config.AppConfig.Namespace)
-	if check.Run() == nil {
-		http.Error(w, "service already exists", http.StatusBadRequest)
-		return
-	}
-
-	// working dir
-	workDir := "tmp\\" + req.Name
-
-	// cleanup BEFORE clone
-	exec.Command("cmd", "/C", "if exist "+workDir+" rmdir /S /Q "+workDir).Run()
-
-	fmt.Println("Cloning repo:", req.Repo)
-
-	// clone repo
-	cmd := exec.Command("git", "clone", req.Repo, workDir)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		http.Error(w, "git clone failed: "+string(out), http.StatusInternalServerError)
-		return
-	}
-
-	// check Dockerfile
-	dockerfilePath := workDir + "\\Dockerfile"
-	if _, err := os.Stat(dockerfilePath); os.IsNotExist(err) {
-		exec.Command("cmd", "/C", "rmdir", "/S", "/Q", workDir).Run()
-		http.Error(w, "Dockerfile must be at repo root", http.StatusBadRequest)
-		return
-	}
-
-	image := "idp/" + req.Name + ":latest"
-
-	// build image
-	fmt.Println("Building image:", image)
-	build := exec.Command("docker", "build", "-t", image, workDir)
-	buildOut, err := build.CombinedOutput()
-	if err != nil {
-		exec.Command("cmd", "/C", "rmdir", "/S", "/Q", workDir).Run()
-		http.Error(w, "build failed: "+string(buildOut), http.StatusInternalServerError)
-		return
-	}
-
-	// load into minikube
-	fmt.Println("Loading into minikube")
-	load := exec.Command("minikube", "image", "load", image)
-	loadOut, err := load.CombinedOutput()
-	if err != nil {
-		exec.Command("cmd", "/C", "rmdir", "/S", "/Q", workDir).Run()
-		http.Error(w, "minikube load failed: "+string(loadOut), http.StatusInternalServerError)
-		return
-	}
-
-	// deploy via helm
-	repoName := "idp/" + req.Name
-	cmd = exec.Command(
-		"helm", "install", req.Name, "charts/myapp",
-		"-n", config.AppConfig.Namespace,
-		"--set", "image.repository="+repoName,
-		"--set", "image.tag=latest",
-		"--set", "type="+req.Type,
-		"--set", "env="+config.AppConfig.Env,
-		"--set", "source=repo",
-	)
-
-	helmOut, err := cmd.CombinedOutput()
-	if err != nil {
-		exec.Command("cmd", "/C", "rmdir", "/S", "/Q", workDir).Run()
-		http.Error(w, "helm failed: "+string(helmOut), http.StatusInternalServerError)
-		return
-	}
-
-	// cleanup AFTER success
-	exec.Command("cmd", "/C", "rmdir", "/S", "/Q", workDir).Run()
-
-	resp := map[string]string{
-		"name":   req.Name,
-		"repo":   req.Repo,
-		"source": "repo",
-		"status": "deployed",
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
-
-func DeployRepoProgressHandler(w http.ResponseWriter, r *http.Request) {
-	type Req struct {
-		Name string `json:"name"`
-		Repo string `json:"repo"`
-		Type string `json:"type"`
-	}
+	cwd, _ := os.Getwd()
+	fmt.Println("CWD:", cwd)
 
 	var req Req
 	json.NewDecoder(r.Body).Decode(&req)
 
-	if req.Name == "" || req.Repo == "" {
-		http.Error(w, "name and repo required", 400)
-		return
-	}
+	flusher, _ := w.(http.Flusher)
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.Header().Set("Transfer-Encoding", "chunked")
+	w.WriteHeader(http.StatusOK)
 
-	flusher, _ := w.(http.Flusher)
-
-	send := func(msg string) {
-		w.Write([]byte(msg + "\n"))
-		flusher.Flush()
+	log := func(msg string) {
+		line := msg + "\n"
+		w.Write([]byte(line))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		fmt.Print(line)
 	}
 
-	send("Cloning repo...")
+	log("Starting deployment...")
 
-	workDir := "tmp\\" + req.Name
-	exec.Command("cmd", "/C", "if exist "+workDir+" rmdir /S /Q "+workDir).Run()
+	// ================= PATH =================
+	projectRoot, _ := os.Getwd()
+	workDir := filepath.Join(projectRoot, "tmp", req.Name)
+	absWorkDir, _ := filepath.Abs(workDir)
 
-	cmd := exec.Command("git", "clone", req.Repo, workDir)
-	if err := cmd.Run(); err != nil {
-		send("❌ Clone failed")
+	log("ABS PATH: " + absWorkDir)
+
+	// ================= CLEAN =================
+	os.RemoveAll(absWorkDir)
+	os.MkdirAll(absWorkDir, os.ModePerm)
+
+	// ================= CLONE =================
+	log("Cloning...")
+	clone := exec.Command("git", "clone", req.Repo, absWorkDir)
+	clone.Stdout = w
+	clone.Stderr = w
+	if err := clone.Run(); err != nil {
+		log("❌ clone failed")
 		return
 	}
 
-	send("Building image...")
+	// ================= LIST FILES =================
+	files, _ := os.ReadDir(absWorkDir)
+	for _, f := range files {
+		log("FILE: " + f.Name())
+	}
+
+	// ================= DETECT =================
+	repoType := "unknown"
+
+	if _, err := os.Stat(filepath.Join(absWorkDir, "Dockerfile")); err == nil {
+		repoType = "docker"
+	} else if _, err := os.Stat(filepath.Join(absWorkDir, "package.json")); err == nil {
+		repoType = "node"
+	} else if _, err := os.Stat(filepath.Join(absWorkDir, "requirements.txt")); err == nil {
+		repoType = "python"
+	}
+
+	log("Detected: " + repoType)
+
+	if repoType == "unknown" {
+		log("❌ unsupported repo type")
+		return
+	}
+
+	// ================= DOCKERFILE =================
+	log("STEP: Creating Dockerfile")
+
+	dockerfilePath := filepath.Join(absWorkDir, "Dockerfile")
+	log("Dockerfile path: " + dockerfilePath)
+
+	var dockerContent string
+
+	if repoType == "node" {
+		dockerContent =
+			"FROM node:18\n" +
+				"WORKDIR /app\n" +
+				"COPY package*.json ./\n" +
+				"RUN npm install\n" +
+				"COPY . .\n" +
+				"EXPOSE 3000\n" +
+				`CMD ["npm","start"]`
+	} else if repoType == "python" {
+		dockerContent =
+			"FROM python:3.10\n" +
+				"WORKDIR /app\n" +
+				"COPY . .\n" +
+				"RUN pip install -r requirements.txt\n" +
+				"EXPOSE 5000\n" +
+				`CMD ["python","app.py"]`
+	} else {
+		log("Using existing Dockerfile")
+	}
+
+	// FORCE WRITE (only if not docker repo)
+	if repoType != "docker" {
+		err := os.WriteFile(dockerfilePath, []byte(dockerContent), 0644)
+		if err != nil {
+			log("❌ WRITE FAILED: " + err.Error())
+			return
+		}
+		log("Dockerfile write attempted")
+	}
+
+	// VERIFY FILE EXISTS
+	files, _ = os.ReadDir(absWorkDir)
+	for _, f := range files {
+		log("AFTER WRITE FILE: " + f.Name())
+	}
+
+	if _, err := os.Stat(dockerfilePath); err != nil {
+		log("❌ Dockerfile STILL NOT PRESENT")
+		return
+	}
+
+	log("✅ Dockerfile EXISTS")
+
+	// VERIFY CONTENT
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		log("❌ Cannot read Dockerfile")
+		return
+	}
+
+	log(fmt.Sprintf("Dockerfile size: %d bytes", len(data)))
+
+	if len(data) < 50 {
+		log("❌ Dockerfile corrupted")
+		return
+	}
+
+	// ================= BUILD =================
+	log("Step: Docker build started")
 
 	image := "idp/" + req.Name + ":latest"
-	build := exec.Command("docker", "build", "-t", image, workDir)
+
+	// 🔥 WINDOWS SAFE BUILD
+	build := exec.Command(
+		"cmd", "/C",
+		"cd", absWorkDir, "&&",
+		"docker", "build", "-t", image, ".",
+	)
+
+	build.Stdout = w
+	build.Stderr = w
+
 	if err := build.Run(); err != nil {
-		send("❌ Build failed")
+		log("❌ build failed")
 		return
 	}
 
-	send("Loading into cluster...")
+	log("✅ build success")
 
-	load := exec.Command("minikube", "image", "load", image)
-	if err := load.Run(); err != nil {
-		send("❌ Load failed")
-		return
+	// ================= MINIKUBE =================
+	log("Loading image...")
+	exec.Command("minikube", "image", "load", image).Run()
+
+	// ================= HELM =================
+	log("Deploying...")
+
+	port := "80"
+	if repoType == "node" {
+		port = "3000"
+	} else if repoType == "python" {
+		port = "5000"
 	}
 
-	send("Deploying...")
-
-	cmd = exec.Command(
+	cmd := exec.Command(
 		"helm", "install", req.Name, "charts/myapp",
 		"-n", config.AppConfig.Namespace,
 		"--set", "image.repository=idp/"+req.Name,
 		"--set", "image.tag=latest",
-		"--set", "type="+req.Type,
-		"--set", "env="+config.AppConfig.Env,
 		"--set", "source=repo",
+		"--set", "service.port="+port,
 	)
 
+	cmd.Stdout = w
+	cmd.Stderr = w
+
 	if err := cmd.Run(); err != nil {
-		send("❌ Deploy failed")
+		log("❌ helm install failed")
 		return
 	}
 
-	send("Waiting for pod...")
+	log("Waiting for pods...")
 
 	for i := 0; i < 20; i++ {
 		out, _ := exec.Command(
@@ -744,12 +768,14 @@ func DeployRepoProgressHandler(w http.ResponseWriter, r *http.Request) {
 		).Output()
 
 		if strings.Contains(string(out), "Running") {
-			send("✅ Running")
+			log("✅ Running")
 			break
 		}
+
+		time.Sleep(1 * time.Second)
 	}
 
-	exec.Command("cmd", "/C", "rmdir", "/S", "/Q", workDir).Run()
+	log("🎉 Deployment complete")
 }
 
 func RestartServiceHandler(w http.ResponseWriter, r *http.Request) {
