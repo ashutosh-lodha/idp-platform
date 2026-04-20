@@ -8,9 +8,18 @@ metadata:
     env: {{ .Values.env }}
     managed-by: idp
     source: {{ .Values.source }}
+    repo: {{ default "none" .Values.repo }}
 
 spec:
   replicas: {{ .Values.replicaCount }}
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+
+  minReadySeconds: 5
 
   selector:
     matchLabels:
@@ -23,6 +32,7 @@ spec:
         env: {{ .Values.env }}
         managed-by: idp
         source: {{ .Values.source }}
+        repo: {{ default "none" .Values.repo }}
 
     spec:
       containers:
@@ -34,7 +44,6 @@ spec:
           ports:
             - containerPort: {{ .Values.service.port }}
 
-          # ENV VARIABLES (optional)
           {{- if .Values.envVars }}
           env:
           {{- range $key, $value := .Values.envVars }}
@@ -43,14 +52,12 @@ spec:
           {{- end }}
           {{- end }}
 
-          # SECRETS (optional - FIXED)
           {{- if .Values.secrets }}
           envFrom:
             - secretRef:
                 name: {{ .Release.Name }}-secret
           {{- end }}
 
-          # HEALTH CHECKS
           readinessProbe:
             httpGet:
               path: /
@@ -65,7 +72,6 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
 
-          # RESOURCES (fixed indentation)
           resources:
             limits:
               cpu: {{ .Values.resources.limits.cpu }}

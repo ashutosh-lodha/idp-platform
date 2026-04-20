@@ -17,6 +17,8 @@ envVars: {}
 
 secrets: {}
 
+repo: ""
+
 resources:
   limits:
     cpu: 200m

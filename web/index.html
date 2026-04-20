@@ -40,7 +40,7 @@
       padding: 10px;
     }
 
-    /* ✅ FIXED HISTORY MODAL */
+    /* FIXED HISTORY MODAL */
     #historyModal {
       display: none;
       position: fixed;
@@ -131,11 +131,12 @@
     </div>
   </div>
   <div style="height:90%; overflow:auto;">
+    <div id="timeline" style="margin-bottom:10px;"></div>
     <pre id="logsContent"></pre>
   </div>
 </div>
 
-<!-- ✅ FIXED HISTORY MODAL (OUTSIDE logsModal) -->
+<!-- FIXED HISTORY MODAL (OUTSIDE logsModal) -->
 <div id="historyModal">
   <div style="display:flex; justify-content:space-between;">
     <h3>History</h3>
@@ -147,6 +148,8 @@
 <script>
 
 /* ONLY IMPORTANT FUNCTIONS */
+
+let deployingServices = {};
 
 async function showHistory(name) {
   const res = await fetch(`/history?name=${name}`);
@@ -160,6 +163,7 @@ async function showHistory(name) {
     output += `Revision: ${h.revision}\n`;
     output += `Status: ${h.status}\n`;
     output += `Updated: ${h.updated}\n`;
+    output += `Description: ${h.description}\n`;
     output += "----------------------\n";
   });
 
@@ -207,10 +211,10 @@ function getHealth(s) {
 }
 
 async function deployUnified() {
+
   const mode = modeEl.value;
   const name = nameEl.value;
   const type = typeEl.value;
-  const replicas = parseInt(replicasEl.value);
 
   let env = {};
   const envInput = envEl.value;
@@ -222,48 +226,23 @@ async function deployUnified() {
     });
   }
 
-  // 🔥 CREATE TEMP SERVICE ENTRY IMMEDIATELY
-  const tbody = document.getElementById("tableBody");
+  // CREATE LOCAL STATE (IMPORTANT)
+    deployingServices[name] = {
+    status: "CLONING",
+    logs: "",
+    explain: {},   
+    deleting: false,
+    failed: false
+  };
 
-  tbody.innerHTML = `
-    <tr>
-      <td>${name} <span class="badge repo">repo</span></td>
-      <td class="blue">Deploying...</td>
-      <td>-</td>
-      <td>-</td>
-      <td>-</td>
-      <td>Live logs below</td>
-    </tr>
-  ` + tbody.innerHTML;
+  renderServices(); // instant UI
 
-  if (mode === "image") {
-    let image = imageEl.value;
-    if (!image.includes(":")) image += ":latest";
-
-    showToast("Deploying...", "#555");
-
-    const res = await fetch("/provision", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, image, replicas, type, env })
-    });
-
-    res.ok ? showToast("✅ Deployed", "green") : showToast("❌ Failed", "red");
-
-    loadServices();
-    return;
-  }
-
-  // STREAMING DEPLOY (CORE FIX)
   const repo = repoEl.value;
-
-  logsModal.style.display = "block";
-  logsContent.innerText = "Starting deployment...\n";
 
   const res = await fetch("/deploy-repo", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, repo, type })
+    body: JSON.stringify({ name, repo, type, env })
   });
 
   const reader = res.body.getReader();
@@ -272,15 +251,40 @@ async function deployUnified() {
   function read() {
     reader.read().then(({ done, value }) => {
       if (done) {
-        showToast("Finished", "blue");
+        if (!deployingServices[name].failed) {
+          deployingServices[name].status = "READY";
+        }
+        renderServices();
         loadServices();
         return;
       }
 
       const chunk = decoder.decode(value);
-      logsContent.innerText += chunk;
-      logsContent.scrollTop = logsContent.scrollHeight;
 
+      deployingServices[name].logs += chunk;
+
+      if (chunk.includes("INFO:")) {
+        const line = chunk.split("INFO:")[1].trim().split("\n")[0];
+
+        const [key, value] = line.split(":");
+
+        if (key && value) {
+          deployingServices[name].explain[key] = value;
+        }
+      }
+
+      if (chunk.includes("STEP:")) {
+        const step = chunk.split("STEP:")[1].trim().split("\n")[0];
+
+        if (step.includes("FAILED")) {
+          deployingServices[name].status = "FAILED";
+          deployingServices[name].failed = true;
+        } else {
+          deployingServices[name].status = step;
+        }
+      }
+
+      renderServices();
       read();
     });
   }
@@ -291,9 +295,20 @@ async function deployUnified() {
 async function deleteService(name) {
   if (!confirm("Delete service?")) return;
 
-  const res = await fetch(`/delete?name=${name}`);
-  if (!res.ok) showToast("Delete failed","red");
+  if (deployingServices[name]) {
+    deployingServices[name].deleting = true;
+    renderServices();
+  }
 
+  const res = await fetch(`/delete?name=${name}`);
+
+  if (!res.ok) {
+    showToast("Delete failed","red");
+    return;
+  }
+
+  delete deployingServices[name];
+  renderServices();
   loadServices();
 }
 
@@ -325,6 +340,28 @@ function showLogs(pod){
     }
     read();
   });
+}
+
+function updateTimeline(step) {
+  const t = document.getElementById("timeline");
+
+  const steps = ["CLONING","DETECTED","BUILDING","DEPLOYING","READY"];
+
+  let html = "";
+
+  steps.forEach(s => {
+    let color = "#555";
+
+    if (step.includes(s)) color = "dodgerblue";
+    if (step === "READY" && s === "READY") color = "green";
+    if (step.includes("FAILED")) color = "red";
+
+    html += `<span style="margin-right:10px;color:${color}">
+      ${s}
+    </span>`;
+  });
+
+  t.innerHTML = html;
 }
 
 function closeLogs(){
@@ -443,6 +480,83 @@ async function loadServices(){
   });
 
   tbody.innerHTML=rows.join("");
+}
+
+function renderTimeline(step) {
+  const steps = ["CLONING","DETECTED","BUILDING","DEPLOYING","READY"];
+
+  return steps.map(s => {
+    let color = "#999";
+
+    if (step.includes("FAILED")) color = "red";
+    else if (step === s) color = "dodgerblue";
+    else if (step === "READY" && s === "READY") color = "green";
+
+    return `<span style="margin-right:10px;color:${color}">${s}</span>`;
+  }).join("");
+}
+
+function getColor(status) {
+  if (status.includes("FAILED")) return "red";
+  if (status === "READY") return "green";
+  return "blue";
+}
+
+function renderServices() {
+  const tbody = document.getElementById("tableBody");
+
+  let rows = "";
+
+  // 🔥 DEPLOYING SERVICES FIRST
+  Object.keys(deployingServices).forEach(name => {
+    const s = deployingServices[name];
+
+    rows += `
+      <tr>
+        <td>${name} <span class="badge repo">repo</span></td>
+        <td class="${getColor(s.status)}">${s.deleting ? "Deleting..." : s.status}</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td>
+          ${!s.deleting ? `<button onclick="toggleLogs('${name}')">Logs</button>` : ""}
+        </td>
+      </tr>
+
+      <tr>
+        <td colspan="6">
+          ${renderTimeline(s.status)}
+          ${renderExplain(s.explain)}
+          <pre style="max-height:150px;overflow:auto;background:#111;color:#0f0;padding:5px;">
+          ${s.logs}
+          </pre>
+        </td>
+      </tr>
+    `;
+  });
+
+  // call original load logic AFTER this if needed
+
+  tbody.innerHTML = rows;
+}
+
+function renderExplain(explain) {
+  if (!explain || Object.keys(explain).length === 0) return "";
+
+  return `
+    <div style="
+      background:#f6f8fa;
+      padding:8px;
+      margin:5px 0;
+      border-radius:6px;
+      font-size:13px;
+    ">
+      <strong>Explain:</strong><br>
+      ${Object.entries(explain).map(([k,v]) => 
+        `<div><b>${k}:</b> ${v}</div>`
+      ).join("")}
+    </div>
+  `;
 }
 
 const modeEl=document.getElementById("mode");
