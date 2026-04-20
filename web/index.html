@@ -1,658 +1,324 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>IDP Dashboard</title>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Mini IDP</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"/>
   <style>
-    body { font-family: Arial; padding: 20px; }
-    input, select { margin: 5px; padding: 5px; }
-    button { margin: 5px; padding: 5px 10px; cursor: pointer; }
-    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-    th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
-    th { background-color: #f4f4f4; }
-
-    .green { color: green; font-weight: bold; }
-    .yellow { color: orange; font-weight: bold; }
-    .red { color: red; font-weight: bold; }
-    .blue { color: dodgerblue; font-weight: bold; }
-
-    .badge {
-      padding: 2px 6px;
-      margin-left: 6px;
-      border-radius: 4px;
-      font-size: 12px;
-      color: white;
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:      #0b0f18;
+      --surf:    #141923;
+      --surf2:   #0f1724;
+      --border:  #1e2d3d;
+      --border2: #2d3748;
+      --text:    #e2e8f0;
+      --muted:   #94a3b8;
+      --dim:     #64748b;
+      --blue:    #3b82f6;
+      --blue-l:  #60a5fa;
+      --purple:  #7c3aed;
+      --purple-l:#a78bfa;
+      --green:   #10b981;
+      --green-l: #34d399;
+      --red:     #ef4444;
+      --red-l:   #f87171;
+      --amber:   #f59e0b;
+      --amber-l: #fbbf24;
     }
+    html, body { height: 100%; }
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; font-size: 14px; line-height: 1.5; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--surf2); }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+    button { font-family: 'Inter', sans-serif; cursor: pointer; transition: opacity .15s; }
+    button:hover { opacity: .82; }
+    input { font-family: 'Inter', sans-serif; outline: none; transition: border-color .15s; }
+    input:focus { border-color: var(--blue) !important; }
 
-    .manual { background: #28a745; }
-    .repo { background: #007bff; }
-
-    #logsModal {
-      display: none;
-      position: fixed;
-      top: 5%;
-      left: 5%;
-      width: 90%;
-      height: 85%;
-      background: black;
-      color: lime;
-      z-index: 1000;
-      border-radius: 8px;
-      padding: 10px;
+    /* ── HEADER ── */
+    #header {
+      background: var(--surf2); border-bottom: 1px solid var(--border);
+      padding: 0 28px; display: flex; align-items: center; height: 58px;
+      position: sticky; top: 0; z-index: 100; gap: 16px;
     }
+    #logo { display: flex; align-items: center; gap: 11px; flex-shrink: 0; }
+    #logo-text-wrap { line-height: 1.2; }
+    #logo-name { font-size: 14px; font-weight: 700; color: var(--text); }
+    #logo-sub  { font-size: 10px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--blue-l); }
+    #header-stats { display: flex; align-items: center; gap: 18px; margin-left: auto; }
+    .stat-pill { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); }
+    .stat-dot  { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    #btn-refresh { background: var(--surf); border: 1px solid var(--border2); border-radius: 7px; color: var(--muted); font-size: 12px; font-weight: 500; padding: 6px 13px; }
 
-    /* FIXED HISTORY MODAL */
-    #historyModal {
-      display: none;
-      position: fixed;
-      top: 10%;
-      left: 10%;
-      width: 80%;
-      height: 70%;
-      background: white;
-      z-index: 2000;
-      padding: 15px;
-      overflow: auto;
-      border-radius: 8px;
-      box-shadow: 0 0 10px rgba(0,0,0,0.5);
-    }
+    /* ── LAYOUT ── */
+    #main { max-width: 1100px; margin: 0 auto; padding: 28px 24px 60px; }
 
-    #toast {
-      display:none;
-      position: fixed;
-      top: 20px;
-      right: 20px;
-      background: #333;
-      color: white;
-      padding: 10px 15px;
-      border-radius: 6px;
-      z-index: 3000;
-    }
+    /* ── SECTION HEADING ── */
+    .s-head { display: flex; align-items: center; gap: 9px; margin-bottom: 13px; }
+    .s-bar  { width: 3px; height: 18px; border-radius: 2px; flex-shrink: 0; }
+    .s-title { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+    .s-badge { border-radius: 12px; padding: 1px 9px; font-size: 11px; font-weight: 600; }
+
+    /* ── DEPLOY CARD ── */
+    #deploy-card { background: var(--surf); border: 1px solid var(--border); border-radius: 12px; padding: 20px 22px; margin-bottom: 26px; }
+    #deploy-title { display: flex; align-items: center; gap: 9px; margin-bottom: 18px; }
+    #deploy-title-bar { width: 3px; height: 18px; border-radius: 2px; background: linear-gradient(var(--blue), var(--purple)); flex-shrink: 0; }
+    #deploy-title span { font-size: 14px; font-weight: 600; color: var(--text); }
+    #mode-toggle { display: flex; background: var(--surf2); border: 1px solid var(--border); border-radius: 9px; padding: 3px; width: fit-content; gap: 2px; margin-bottom: 18px; }
+    .mode-btn { background: transparent; border: none; border-radius: 7px; padding: 6px 18px; font-size: 12px; font-weight: 500; color: var(--dim); transition: background .15s, color .15s; }
+    .mode-btn.active { background: var(--border); color: var(--text); font-weight: 600; }
+    #form-grid { display: grid; gap: 10px; margin-bottom: 14px; }
+    .field label { display: block; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); margin-bottom: 5px; }
+    .field input { width: 100%; background: var(--surf2); border: 1px solid var(--border); border-radius: 7px; padding: 8px 12px; color: var(--text); font-size: 13px; }
+    .field input::placeholder { color: var(--dim); }
+    #btn-deploy { background: linear-gradient(135deg, #2563eb, var(--purple)); color: #fff; border: none; border-radius: 8px; padding: 9px 26px; font-size: 13px; font-weight: 600; box-shadow: 0 4px 16px #3b82f625; }
+
+    /* ── DOTS ── */
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .dot-pulse { position: relative; display: inline-flex; width: 10px; height: 10px; flex-shrink: 0; }
+    .dot-pulse-ring { position: absolute; inset: 0; border-radius: 50%; opacity: .4; animation: ping 1.2s cubic-bezier(0,0,.2,1) infinite; }
+    .dot-pulse-core { position: relative; width: 10px; height: 10px; border-radius: 50%; }
+
+    /* ── SOURCE BADGE ── */
+    .src-badge { border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: 500; }
+    .src-image { background: #7c3aed20; color: var(--purple-l); border: 1px solid #7c3aed35; }
+    .src-repo  { background: #1d4ed820; color: var(--blue-l);   border: 1px solid #1d4ed835; }
+
+    /* ── IN-PROGRESS CARD ── */
+    .ip-card { border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; animation: slideDown .25s ease; }
+    .ip-top  { display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px; }
+    .ip-name-row { display: flex; align-items: center; gap: 10px; }
+    .ip-name { font-size: 14px; font-weight: 600; color: var(--text); }
+    .ip-status-label { font-size: 12px; font-weight: 700; }
+    .ip-dismiss { background: var(--surf2); border: 1px solid var(--border2); border-radius: 5px; color: var(--dim); font-size: 11px; padding: 3px 10px; }
+    .step-bar { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+    .step-item { display: flex; align-items: center; gap: 4px; }
+    .step-dot  { width: 7px; height: 7px; border-radius: 50%; }
+    .step-lbl  { font-size: 11px; }
+    .step-line { width: 16px; height: 1px; background: var(--border2); margin: 0 2px; }
+    .step-line.done { background: var(--green); }
+    .err-log { margin-top: 10px; background: #0d1117; border-radius: 6px; padding: 8px 10px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--red-l); max-height: 80px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+
+    /* ── SERVICE CARD ── */
+    .svc-card { background: var(--surf); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 10px; transition: border-color .2s; }
+    .svc-card:hover { border-color: #2d4a6d; }
+    .svc-top { display: flex; align-items: center; padding: 13px 16px; gap: 13px; cursor: pointer; user-select: none; }
+    .svc-info { flex: 1; min-width: 0; }
+    .svc-name-row { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+    .svc-name { font-size: 14px; font-weight: 600; color: var(--text); }
+    .svc-sub  { font-size: 11px; color: var(--dim); }
+    .svc-metrics { display: flex; align-items: center; gap: 18px; }
+    .metric-col   { text-align: center; }
+    .metric-label { font-size: 10px; color: var(--dim); margin-bottom: 2px; }
+    .metric-val   { font-size: 12px; font-weight: 500; color: var(--muted); }
+    .health-pill  { display: flex; align-items: center; gap: 5px; border-radius: 6px; padding: 3px 10px; }
+    .chevron { color: var(--dim); font-size: 13px; transition: transform .2s; margin-left: 4px; }
+    .chevron.open { transform: rotate(180deg); }
+    .svc-body { padding: 0 16px 14px; border-top: 1px solid var(--border); display: none; }
+    .svc-body.open { display: block; }
+    .pods-list { padding-top: 12px; margin-bottom: 12px; }
+    .pod-row { display: flex; align-items: center; gap: 9px; padding: 7px 10px; background: var(--surf2); border-radius: 6px; margin-bottom: 5px; font-size: 12px; }
+    .pod-name   { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pod-status { font-size: 11px; min-width: 120px; }
+    .pod-metric { font-size: 11px; color: var(--dim); min-width: 48px; }
+    .actions { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
+    .btn  { border-radius: 7px; padding: 5px 13px; font-size: 12px; font-weight: 500; border: 1px solid; }
+    .btn-ghost { background: var(--surf2); border-color: var(--border2); color: var(--muted); }
+    .btn-blue  { background: #1d4ed820; border-color: #1d4ed840; color: var(--blue-l); }
+    .btn-red   { background: #ef444418; border-color: #ef444430; color: var(--red-l); margin-left: auto; }
+    .btn-sm    { padding: 3px 10px; font-size: 11px; border-radius: 5px; }
+
+    /* ── EMPTY ── */
+    #empty-state { background: var(--surf); border: 1px dashed var(--border); border-radius: 12px; padding: 50px 20px; text-align: center; }
+
+    /* ── MODAL OVERLAY ── */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.72); backdrop-filter: blur(4px); z-index: 4000; align-items: center; justify-content: center; animation: fadeIn .2s ease; }
+    .modal-overlay.open { display: flex; }
+
+    /* ── LOGS MODAL ── */
+    #logs-inner { width: 82%; max-width: 940px; height: 76vh; background: #0d1117; border-radius: 13px; border: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 24px 72px rgba(0,0,0,.65); }
+    #logs-hdr { display: flex; align-items: center; justify-content: space-between; padding: 11px 16px; background: #111827; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .term-dots { display: flex; gap: 6px; }
+    .term-dot  { width: 12px; height: 12px; border-radius: 50%; }
+    #logs-pod  { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--dim); margin-left: 10px; }
+    #logs-body { flex: 1; overflow-y: auto; padding: 14px 16px; }
+    #logs-pre  { font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.75; color: #a5f3fc; white-space: pre-wrap; word-break: break-word; margin: 0; }
+
+    /* ── HISTORY MODAL ── */
+    #hist-inner { width: 58%; max-width: 680px; max-height: 72vh; background: var(--surf); border-radius: 13px; border: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 24px 64px rgba(0,0,0,.55); }
+    #hist-hdr { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    #hist-body { overflow-y: auto; padding: 16px 20px; flex: 1; }
+    .hist-entry { background: #1a2235; border: 1px solid var(--border); border-radius: 8px; padding: 13px 16px; margin-bottom: 9px; }
+    .hist-top  { display: flex; justify-content: space-between; margin-bottom: 5px; }
+
+    /* ── CONFIRM MODAL ── */
+    #confirm-overlay { z-index: 8000; }
+    #confirm-inner { background: var(--surf); border: 1px solid var(--border); border-radius: 12px; padding: 24px 28px; width: 380px; box-shadow: 0 24px 64px rgba(0,0,0,.6); }
+    #confirm-title { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+    #confirm-msg   { font-size: 13px; color: var(--muted); line-height: 1.6; margin-bottom: 22px; }
+    #confirm-btns  { display: flex; gap: 10px; justify-content: flex-end; }
+
+    /* ── SCALE MODAL ── */
+    #scale-overlay { z-index: 8000; }
+    #scale-inner { background: var(--surf); border: 1px solid var(--border); border-radius: 12px; padding: 24px 28px; width: 340px; box-shadow: 0 24px 64px rgba(0,0,0,.6); }
+
+    /* ── TOAST ── */
+    #toast-wrap { position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+    .toast { background: var(--surf); border-radius: 8px; padding: 11px 15px; display: flex; align-items: center; gap: 9px; font-size: 13px; box-shadow: 0 8px 32px rgba(0,0,0,.45); min-width: 240px; max-width: 360px; animation: slideInRight .25s ease; border-left: 3px solid; pointer-events: all; }
+    .toast-close { background: none; border: none; color: var(--dim); font-size: 18px; line-height: 1; padding: 0; flex-shrink: 0; }
+
+    /* ── ANIMATIONS ── */
+    @keyframes ping        { 75%,100% { transform: scale(2.2); opacity: 0; } }
+    @keyframes slideDown   { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:none; } }
+    @keyframes slideInRight{ from { opacity:0; transform:translateX(20px); } to { opacity:1; transform:none; } }
+    @keyframes fadeIn      { from { opacity:0; } to { opacity:1; } }
   </style>
 </head>
-
 <body>
 
-<h2>IDP Dashboard</h2>
-
-<div id="toast"></div>
-
-<!-- CONTROLS (UNCHANGED) -->
-<div id="controls">
-
-  <select id="mode" onchange="toggleMode()">
-    <option value="image">Image</option>
-    <option value="repo">GitHub Repo</option>
-  </select>
-
-  <input id="name" placeholder="Service Name" />
-
-  <div id="imageFields">
-    <input id="image" placeholder="Image (nginx:latest)" />
+<!-- HEADER -->
+<div id="header">
+  <div id="logo">
+    <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#3b82f6"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient>
+        <linearGradient id="g2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#60a5fa"/><stop offset="100%" stop-color="#a78bfa"/></linearGradient>
+      </defs>
+      <rect width="36" height="36" rx="9" fill="url(#g1)"/>
+      <polygon points="18,5.5 27.5,11 27.5,22 18,27.5 8.5,22 8.5,11" fill="none" stroke="url(#g2)" stroke-width="1.5" stroke-linejoin="round"/>
+      <circle cx="18" cy="16" r="3.2" fill="white" opacity="0.92"/>
+      <line x1="18" y1="19.2" x2="18" y2="23" stroke="white" stroke-width="1.6" stroke-linecap="round" opacity="0.75"/>
+      <line x1="14.8" y1="21.2" x2="18" y2="19.2" stroke="white" stroke-width="1.6" stroke-linecap="round" opacity="0.75"/>
+      <line x1="21.2" y1="21.2" x2="18" y2="19.2" stroke="white" stroke-width="1.6" stroke-linecap="round" opacity="0.75"/>
+    </svg>
+    <div id="logo-text-wrap">
+      <div id="logo-name">Internal Developer</div>
+      <div id="logo-sub">Platform</div>
+    </div>
   </div>
 
-  <div id="repoFields" style="display:none;">
-    <input id="repo" placeholder="GitHub Repo URL" />
+  <div id="header-stats">
+    <div class="stat-pill"><span class="stat-dot" id="dot-healthy" style="background:var(--green-l);box-shadow:0 0 5px var(--green-l)"></span><span id="stat-healthy">0 healthy</span></div>
+    <div class="stat-pill" id="pill-failed" style="display:none"><span class="stat-dot" style="background:var(--red-l);box-shadow:0 0 5px var(--red-l)"></span><span id="stat-failed">0 failed</span></div>
+    <div class="stat-pill"><span class="stat-dot" style="background:var(--blue-l);box-shadow:0 0 5px var(--blue-l)"></span><span id="stat-total">0 total</span></div>
   </div>
-
-  <input id="env" placeholder="ENV (KEY=VALUE)" />
-  <input id="replicas" type="number" value="1" min="1" max="5" />
-
-  <select id="type">
-    <option value="web">web</option>
-    <option value="api">api</option>
-    <option value="worker">worker</option>
-  </select>
-
-  <button onclick="deployUnified()">Deploy</button>
-  <button onclick="loadServices()">Refresh</button>
+  <button id="btn-refresh" onclick="loadServices()">↻ Refresh</button>
 </div>
 
-<table>
-  <thead>
-    <tr>
-      <th>Service</th>
-      <th>Status</th>
-      <th>Replicas</th>
-      <th>CPU</th>
-      <th>Memory</th>
-      <th>Actions</th>
-    </tr>
-  </thead>
-  <tbody id="tableBody"></tbody>
-</table>
+<!-- MAIN -->
+<div id="main">
+
+  <!-- DEPLOY CARD -->
+  <div id="deploy-card">
+    <div id="deploy-title">
+      <div id="deploy-title-bar"></div>
+      <span>Deploy New Service</span>
+    </div>
+    <div id="mode-toggle">
+      <button class="mode-btn active" id="btn-img" onclick="setMode('image')">🐳 Docker Image</button>
+      <button class="mode-btn"        id="btn-repo" onclick="setMode('repo')">⎇ GitHub Repo</button>
+    </div>
+    <div id="form-grid">
+      <div class="field"><label>Service Name</label><input id="f-name" placeholder="my-service" autocomplete="off"/></div>
+      <div class="field"><label id="f-src-lbl">Image</label><input id="f-src" placeholder="nginx:latest" autocomplete="off"/></div>
+      <div class="field"><label>ENV Vars</label><input id="f-env" placeholder="KEY=VALUE,KEY2=VAL" autocomplete="off"/></div>
+      <div class="field" id="f-rep-wrap"><label>Replicas</label><input id="f-rep" type="number" value="1" min="1" max="5"/></div>
+    </div>
+    <button id="btn-deploy" onclick="deployService()">🚀 Deploy</button>
+  </div>
+
+  <!-- IN PROGRESS SECTION -->
+  <div id="ip-section" style="display:none;margin-bottom:26px">
+    <div class="s-head">
+      <div class="s-bar" style="background:var(--blue)"></div>
+      <span class="s-title">In Progress</span>
+      <span class="s-badge" id="ip-count" style="background:#1d4ed820;border:1px solid #1d4ed840;color:var(--blue-l)">0</span>
+    </div>
+    <div id="ip-list"></div>
+  </div>
+
+  <!-- SERVICES -->
+  <div>
+    <div class="s-head">
+      <div class="s-bar" style="background:var(--green)"></div>
+      <span class="s-title">Deployed Services</span>
+      <span class="s-badge" id="svc-count" style="background:#10b98118;border:1px solid #10b98128;color:var(--green-l)">0</span>
+    </div>
+    <div id="svc-list">
+      <div id="empty-state">
+        <div style="font-size:36px;margin-bottom:12px;opacity:.5">⬡</div>
+        <div style="font-size:14px;font-weight:600;color:var(--muted);margin-bottom:4px">No services deployed yet</div>
+        <div style="font-size:12px;color:var(--dim)">Deploy your first service above to get started</div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- LOGS MODAL -->
-<div id="logsModal">
-  <div style="position: sticky; top:0; background:black; display:flex; justify-content:space-between;">
-    <strong>Logs</strong>
-    <div>
-      <button onclick="closeLogs()">Stop</button>
-      <button onclick="closeLogs()">✖</button>
+<div class="modal-overlay" id="logs-overlay" onclick="closeLogs()">
+  <div id="logs-inner" onclick="event.stopPropagation()">
+    <div id="logs-hdr">
+      <div style="display:flex;align-items:center">
+        <div class="term-dots">
+          <div class="term-dot" style="background:#ef4444"></div>
+          <div class="term-dot" style="background:#f59e0b"></div>
+          <div class="term-dot" style="background:#10b981"></div>
+        </div>
+        <span id="logs-pod"></span>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="closeLogs()">✕ Close</button>
     </div>
-  </div>
-  <div style="height:90%; overflow:auto;">
-    <div id="timeline" style="margin-bottom:10px;"></div>
-    <pre id="logsContent"></pre>
+    <div id="logs-body"><pre id="logs-pre">Connecting…</pre></div>
   </div>
 </div>
 
-<!-- FIXED HISTORY MODAL (OUTSIDE logsModal) -->
-<div id="historyModal">
-  <div style="display:flex; justify-content:space-between;">
-    <h3>History</h3>
-    <button onclick="closeHistory()">✖</button>
+<!-- HISTORY MODAL -->
+<div class="modal-overlay" id="hist-overlay" onclick="closeHistory()">
+  <div id="hist-inner" onclick="event.stopPropagation()">
+    <div id="hist-hdr">
+      <div>
+        <div style="font-size:15px;font-weight:700;color:var(--text)">Deployment History</div>
+        <div id="hist-svc" style="font-size:12px;color:var(--dim);margin-top:2px"></div>
+      </div>
+      <button class="btn btn-ghost" onclick="closeHistory()">Close</button>
+    </div>
+    <div id="hist-body"></div>
   </div>
-  <pre id="historyContent"></pre>
 </div>
 
-<script>
-
-/* ONLY IMPORTANT FUNCTIONS */
-
-let deployingServices = {};
-
-async function showHistory(name) {
-  const res = await fetch(`/history?name=${name}`);
-  const data = await res.json();
-
-  historyModal.style.display = "block";
-
-  let output = "";
-
-  data.forEach(h => {
-    output += `Revision: ${h.revision}\n`;
-    output += `Status: ${h.status}\n`;
-    output += `Updated: ${h.updated}\n`;
-    output += `Description: ${h.description}\n`;
-    output += "----------------------\n";
-  });
-
-  historyContent.innerText = output;
-}
-
-function closeHistory() {
-  historyModal.style.display = "none";
-  historyContent.innerText = "";
-}
-
-function showToast(msg, color="#333") {
-  const t = document.getElementById("toast");
-  t.innerText = msg;
-  t.style.background = color;
-  t.style.display = "block";
-  setTimeout(()=>t.style.display="none", 2500);
-}
-
-function toggleMode() {
-  const mode = document.getElementById("mode").value;
-  imageFields.style.display = mode==="image"?"block":"none";
-  repoFields.style.display = mode==="repo"?"block":"none";
-}
-
-function getHealth(s) {
-  const statuses = s.pods.map(p => p.status);
-
-  if (statuses.includes("Pending") || statuses.includes("ContainerCreating")) {
-    return { text: "Deploying", cls: "blue" };
-  }
-
-  if (statuses.some(st =>
-    st.includes("Error") ||
-    st.includes("CrashLoopBackOff") ||
-    st.includes("ImagePullBackOff")
-  )) {
-    return { text: "Failed", cls: "red" };
-  }
-
-  if (s.running === s.replicas) return { text: "Healthy", cls: "green" };
-  if (s.running > 0) return { text: "Degraded", cls: "yellow" };
-
-  return { text: "Deploying", cls: "blue" };
-}
-
-async function deployUnified() {
-
-  const mode = modeEl.value;
-  const name = nameEl.value;
-  const type = typeEl.value;
-
-  let env = {};
-  const envInput = envEl.value;
-
-  if (envInput) {
-    envInput.split(",").forEach(p => {
-      const [k, v] = p.split("=");
-      if (k && v) env[k.trim()] = v.trim();
-    });
-  }
-
-  // SAME STATE (no change)
-  deployingServices[name] = {
-    status: mode === "repo" ? "CLONING" : "DEPLOYING",
-    logs: "",
-    explain: {},
-    deleting: false,
-    failed: false
-  };
-
-  renderServices();
-
-  // ================= REPO FLOW (UNCHANGED) =================
-  if (mode === "repo") {
-
-    const repo = repoEl.value;
-
-    const res = await fetch("/deploy-repo", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, repo, type, env })
-    });
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-
-    function read() {
-      reader.read().then(({ done, value }) => {
-        if (done) {
-          if (!deployingServices[name].failed) {
-            deployingServices[name].status = "READY";
-          }
-          renderServices();
-          loadServices();
-          return;
-        }
-
-        const chunk = decoder.decode(value);
-        deployingServices[name].logs += chunk;
-
-        if (chunk.includes("STEP:")) {
-          const step = chunk.split("STEP:")[1].trim().split("\n")[0];
-
-          if (step.includes("FAILED")) {
-            deployingServices[name].status = "FAILED";
-            deployingServices[name].failed = true;
-          } else {
-            deployingServices[name].status = step;
-          }
-        }
-
-        renderServices();
-        read();
-      });
-    }
-
-    read();
-
-  } else {
-
-    // ================= ✅ IMAGE FLOW (FIXED) =================
-
-    const image = imageEl.value;
-
-    const res = await fetch("/provision", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name,
-        image,
-        type,
-        replicas: parseInt(replicasEl.value),
-        env
-      })
-    });
-
-    if (!res.ok) {
-      const err = await res.text();
-      deployingServices[name].status = "FAILED";
-      deployingServices[name].logs = err;
-      deployingServices[name].failed = true;
-      renderServices();
-      return;
-    }
-
-    // mark as deploying → real state will come from loadServices()
-    deployingServices[name].status = "DEPLOYING";
-
-    renderServices();
-
-    // allow k8s to reflect
-    setTimeout(loadServices, 2000);
-  }
-}
-
-async function deleteService(name) {
-  if (!confirm("Delete service?")) return;
-
-  if (deployingServices[name]) {
-    deployingServices[name].deleting = true;
-    renderServices();
-  }
-
-  const res = await fetch(`/delete?name=${name}`);
-
-  if (!res.ok) {
-    showToast("Delete failed","red");
-    return;
-  }
-
-  delete deployingServices[name];
-  renderServices();
-  loadServices();
-}
-
-function deletePod(pod) {
-  fetch(`/delete-pod?pod=${pod}`).then(loadServices);
-}
-
-function execPod(pod) {
-  fetch(`/exec?pod=${pod}`);
-}
-
-let logReader=null;
-
-function showLogs(pod){
-  logsModal.style.display="block";
-  logsContent.innerText="Connecting...\n";
-
-  fetch(`/logs?pod=${pod}`).then(res=>{
-    logReader=res.body.getReader();
-    const dec=new TextDecoder();
-
-    function read(){
-      logReader.read().then(({done,value})=>{
-        if(done) return;
-        logsContent.innerText+=dec.decode(value);
-        logsContent.scrollTop=logsContent.scrollHeight;
-        read();
-      });
-    }
-    read();
-  });
-}
-
-function updateTimeline(step) {
-  const t = document.getElementById("timeline");
-
-  const steps = ["CLONING","DETECTED","BUILDING","DEPLOYING","READY"];
-
-  let html = "";
-
-  steps.forEach(s => {
-    let color = "#555";
-
-    if (step.includes(s)) color = "dodgerblue";
-    if (step === "READY" && s === "READY") color = "green";
-    if (step.includes("FAILED")) color = "red";
-
-    html += `<span style="margin-right:10px;color:${color}">
-      ${s}
-    </span>`;
-  });
-
-  t.innerHTML = html;
-}
-
-function closeLogs(){
-  logsModal.style.display="none";
-  logsContent.innerText="";
-  if(logReader){logReader.cancel();logReader=null;}
-}
-
-async function updateService(name){
-  const replicas=prompt("Replicas (1-5)");
-  if(!replicas) return;
-
-  await fetch("/service",{
-    method:"PUT",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({name,replicas:parseInt(replicas)})
-  });
-
-  loadServices();
-}
-
-async function restartService(name) {
-  if (!confirm("Restart service?")) return;
-
-  showToast("Restarting...", "#555");
-
-  const res = await fetch(`/restart?name=${name}`);
-
-  if (res.ok) {
-    showToast("🔄 Restarted", "blue");
-  } else {
-    showToast("❌ Failed", "red");
-  }
-
-  loadServices();
-}
-
-async function rollbackService(name) {
-  if (!confirm("Rollback service to previous version?")) return;
-
-  showToast("Rolling back...", "#555");
-
-  const res = await fetch(`/rollback?name=${name}`);
-
-  if (res.ok) {
-    showToast("⏪ Rolled back", "blue");
-  } else {
-    showToast("❌ Failed", "red");
-  }
-
-  loadServices();
-}
-
-async function loadServices(){
-  const services=await fetch("/services").then(r=>r.json());
-
-  let metrics=[];
-  try{metrics=await fetch("/metrics").then(r=>r.json());}catch{}
-
-  const tbody=document.getElementById("tableBody");
-
-  let rows=[];
-
-  services.sort((a,b)=>a.name.localeCompare(b.name));
-
-  services.forEach(s=>{
-    s.pods.sort((a,b)=>a.pod.localeCompare(b.pod));
-
-    const health=getHealth(s);
-
-    let totalCPU=0,totalMemory=0;
-
-    s.pods.forEach(p=>{
-      const m=metrics.find(x=>x.pod===p.pod);
-      if(m){
-        totalCPU+=parseInt(m.cpu||0);
-        totalMemory+=parseInt(m.memory||0);
-      }
-    });
-
-    rows.push(`
-      <tr>
-        <td>${s.name} <span class="badge ${s.source}">${s.source}</span></td>
-        <td class="${health.cls}">${health.text}</td>
-        <td>${s.running}/${s.replicas}</td>
-        <td>${totalCPU}m</td>
-        <td>${totalMemory}Mi</td>
-        <td>
-          <button onclick="window.open('http://${s.name}.127.0.0.1.nip.io')">Open</button>
-          <button onclick="deleteService('${s.name}')">Delete</button>
-          <button onclick="restartService('${s.name}')">Restart</button>
-          <button onclick="updateService('${s.name}')">Update</button>
-          <button onclick="rollbackService('${s.name}')">Rollback</button>
-          <button onclick="showHistory('${s.name}')">History</button>
-        </td>
-      </tr>
-    `);
-
-    s.pods.forEach(p=>{
-      const m=metrics.find(x=>x.pod===p.pod)||{};
-      rows.push(`
-        <tr>
-          <td>↳ ${p.pod}</td>
-          <td>${p.status}</td>
-          <td>-</td>
-          <td>${m.cpu||"-"}</td>
-          <td>${m.memory||"-"}</td>
-          <td>
-            <button onclick="execPod('${p.pod}')">Exec</button>
-            <button onclick="showLogs('${p.pod}')">Logs</button>
-            <button onclick="deletePod('${p.pod}')">Delete Pod</button>
-          </td>
-        </tr>
-      `);
-    });
-  });
-
-  tbody.innerHTML=rows.join("");
-}
-
-function renderTimeline(step) {
-  const steps = ["CLONING","DETECTED","BUILDING","DEPLOYING","READY"];
-
-  return steps.map(s => {
-    let color = "#999";
-
-    if (step.includes("FAILED")) color = "red";
-    else if (step === s) color = "dodgerblue";
-    else if (step === "READY" && s === "READY") color = "green";
-
-    return `<span style="margin-right:10px;color:${color}">${s}</span>`;
-  }).join("");
-}
-
-function getColor(status) {
-  if (status.includes("FAILED")) return "red";
-  if (status === "READY") return "green";
-  return "blue";
-}
-
-function renderServices() {
-  const tbody = document.getElementById("tableBody");
-
-  let rows = "";
-
-  // 🔥 DEPLOYING SERVICES FIRST (SEPARATED VISUALLY)
-  Object.keys(deployingServices).forEach(name => {
-    const s = deployingServices[name];
-
-    rows += `
-      <tr style="background:#f9f9f9;">
-        <td>${name} <span class="badge repo">deploying</span></td>
-        <td class="${getColor(s.status)}">
-          ${s.deleting ? "Deleting..." : s.status}
-        </td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-        <td>
-          ${!s.deleting ? `<button onclick="toggleLogs('${name}')">Logs</button>` : ""}
-        </td>
-      </tr>
-
-      <tr>
-        <td colspan="6">
-          ${renderTimeline(s.status)}
-          ${renderExplain(s.explain)}
-          <pre style="max-height:120px;overflow:auto;background:#111;color:#0f0;padding:5px;">
-${s.logs}
-          </pre>
-        </td>
-      </tr>
-    `;
-  });
-
-  // 🔥 THEN LOAD REAL SERVICES (NO OVERWRITE)
-  fetch("/services")
-    .then(r => r.json())
-    .then(services => {
-
-      let serviceRows = [];
-
-      services.sort((a,b)=>a.name.localeCompare(b.name));
-
-      services.forEach(s=>{
-        s.pods.sort((a,b)=>a.pod.localeCompare(b.pod));
-
-        const health=getHealth(s);
-
-        serviceRows.push(`
-          <tr>
-            <td>${s.name} <span class="badge ${s.source}">${s.source}</span></td>
-            <td class="${health.cls}">${health.text}</td>
-            <td>${s.running}/${s.replicas}</td>
-            <td>-</td>
-            <td>-</td>
-            <td>
-              <button onclick="window.open('http://${s.name}.127.0.0.1.nip.io')">Open</button>
-              <button onclick="deleteService('${s.name}')">Delete</button>
-              <button onclick="restartService('${s.name}')">Restart</button>
-              <button onclick="updateService('${s.name}')">Update</button>
-              <button onclick="rollbackService('${s.name}')">Rollback</button>
-              <button onclick="showHistory('${s.name}')">History</button>
-            </td>
-          </tr>
-        `);
-
-        s.pods.forEach(p=>{
-          serviceRows.push(`
-            <tr>
-              <td>↳ ${p.pod}</td>
-              <td>${p.status}</td>
-              <td>-</td>
-              <td>-</td>
-              <td>-</td>
-              <td>
-                <button onclick="execPod('${p.pod}')">Exec</button>
-                <button onclick="showLogs('${p.pod}')">Logs</button>
-                <button onclick="deletePod('${p.pod}')">Delete Pod</button>
-              </td>
-            </tr>
-          `);
-        });
-
-      });
-
-      tbody.innerHTML = rows + serviceRows.join("");
-    });
-}
-
-function renderExplain(explain) {
-  if (!explain || Object.keys(explain).length === 0) return "";
-
-  return `
-    <div style="
-      background:#f6f8fa;
-      padding:8px;
-      margin:5px 0;
-      border-radius:6px;
-      font-size:13px;
-    ">
-      <strong>Explain:</strong><br>
-      ${Object.entries(explain).map(([k,v]) => 
-        `<div><b>${k}:</b> ${v}</div>`
-      ).join("")}
+<!-- CONFIRM MODAL -->
+<div class="modal-overlay" id="confirm-overlay" onclick="cancelConfirm()">
+  <div id="confirm-inner" onclick="event.stopPropagation()">
+    <div id="confirm-title"></div>
+    <div id="confirm-msg"></div>
+    <div id="confirm-btns">
+      <button class="btn btn-ghost" onclick="cancelConfirm()">Cancel</button>
+      <button id="confirm-ok" onclick="doConfirm()">Confirm</button>
     </div>
-  `;
-}
+  </div>
+</div>
 
-const modeEl=document.getElementById("mode");
-const nameEl=document.getElementById("name");
-const imageEl=document.getElementById("image");
-const repoEl=document.getElementById("repo");
-const typeEl=document.getElementById("type");
-const replicasEl=document.getElementById("replicas");
-const envEl=document.getElementById("env");
-const historyModal = document.getElementById("historyModal");
-const historyContent = document.getElementById("historyContent");
+<!-- SCALE MODAL -->
+<div class="modal-overlay" id="scale-overlay" onclick="cancelScale()">
+  <div id="scale-inner" onclick="event.stopPropagation()">
+    <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px">Scale Service</div>
+    <div id="scale-svc-name" style="font-size:12px;color:var(--dim);margin-bottom:18px"></div>
+    <label style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);display:block;margin-bottom:5px">Replicas (1–5)</label>
+    <input id="scale-val" type="number" min="1" max="5" value="1"
+      style="width:100%;background:var(--surf2);border:1px solid var(--border);border-radius:7px;padding:9px 12px;color:var(--text);font-size:14px;margin-bottom:18px"/>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn btn-ghost" onclick="cancelScale()">Cancel</button>
+      <button onclick="doScale()" style="background:linear-gradient(135deg,#2563eb,#7c3aed);border:none;border-radius:7px;color:#fff;padding:7px 18px;font-size:13px;font-weight:600;cursor:pointer">Apply</button>
+    </div>
+  </div>
+</div>
 
-loadServices();
-setInterval(loadServices,5000);
+<!-- TOASTS -->
+<div id="toast-wrap"></div>
 
-</script>
-
+<script src="app.js"></script>
 </body>
 </html>
