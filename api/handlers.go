@@ -66,8 +66,8 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !strings.Contains(req.Image, ":") {
-		http.Error(w, "image must include tag (e.g., nginx:latest)", http.StatusBadRequest)
+	if req.Image == "" {
+		http.Error(w, "image required", http.StatusBadRequest)
 		return
 	}
 
@@ -83,11 +83,22 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ================= IMAGE SPLIT =================
+	// ================= IMAGE SPLIT (UPDATED) =================
 
-	parts := strings.Split(req.Image, ":")
-	repo := parts[0]
-	tag := parts[1]
+	var repo, tag string
+
+	if strings.Contains(req.Image, ":") {
+		parts := strings.Split(req.Image, ":")
+		repo = parts[0]
+		tag = parts[1]
+	} else {
+		// ✅ DEFAULT TO LATEST
+		repo = req.Image
+		tag = "latest"
+
+		// also normalize for minikube load
+		req.Image = repo + ":latest"
+	}
 
 	// ================= ENV SUPPORT =================
 
@@ -103,13 +114,22 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 		secretArgs = append(secretArgs, "--set", fmt.Sprintf("secrets.%s=%s", k, v))
 	}
 
+	// ================= FORCE REDEPLOY =================
+	redeployTag := fmt.Sprintf("%d", time.Now().Unix())
+
 	// ================= HELM INSTALL =================
 
 	cmdArgs := []string{
 		"install", req.Name, "charts/myapp",
 		"-n", config.AppConfig.Namespace,
+
 		"--set", "image.repository=" + repo,
 		"--set", "image.tag=" + tag,
+
+		// ✅ critical for minikube + refresh
+		"--set", "image.pullPolicy=Never",
+		"--set", "podAnnotations.redeploy=" + redeployTag,
+
 		"--set", fmt.Sprintf("replicaCount=%d", req.Replicas),
 		"--set", "type=" + req.Type,
 		"--set", "env=" + config.AppConfig.Env,
@@ -119,6 +139,19 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 	// append env + secrets
 	cmdArgs = append(cmdArgs, envArgs...)
 	cmdArgs = append(cmdArgs, secretArgs...)
+
+	// ================= LOAD IMAGE INTO MINIKUBE =================
+
+	load := exec.Command("minikube", "image", "load", req.Image)
+	load.Stdout = os.Stdout
+	load.Stderr = os.Stderr
+
+	if err := load.Run(); err != nil {
+		http.Error(w, "failed to load image into minikube", 500)
+		return
+	}
+
+	// ================= HELM EXEC =================
 
 	cmd := exec.Command("helm", cmdArgs...)
 
@@ -133,7 +166,7 @@ func ProvisionHandler(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
 		"name":     req.Name,
 		"type":     req.Type,
-		"image":    req.Image,
+		"image":    repo + ":" + tag, // normalized output
 		"replicas": req.Replicas,
 		"status":   "deploying",
 	}

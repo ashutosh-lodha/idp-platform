@@ -226,70 +226,98 @@ async function deployUnified() {
     });
   }
 
-  // CREATE LOCAL STATE (IMPORTANT)
-    deployingServices[name] = {
-    status: "CLONING",
+  // SAME STATE (no change)
+  deployingServices[name] = {
+    status: mode === "repo" ? "CLONING" : "DEPLOYING",
     logs: "",
-    explain: {},   
+    explain: {},
     deleting: false,
     failed: false
   };
 
-  renderServices(); // instant UI
+  renderServices();
 
-  const repo = repoEl.value;
+  // ================= REPO FLOW (UNCHANGED) =================
+  if (mode === "repo") {
 
-  const res = await fetch("/deploy-repo", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, repo, type, env })
-  });
+    const repo = repoEl.value;
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-
-  function read() {
-    reader.read().then(({ done, value }) => {
-      if (done) {
-        if (!deployingServices[name].failed) {
-          deployingServices[name].status = "READY";
-        }
-        renderServices();
-        loadServices();
-        return;
-      }
-
-      const chunk = decoder.decode(value);
-
-      deployingServices[name].logs += chunk;
-
-      if (chunk.includes("INFO:")) {
-        const line = chunk.split("INFO:")[1].trim().split("\n")[0];
-
-        const [key, value] = line.split(":");
-
-        if (key && value) {
-          deployingServices[name].explain[key] = value;
-        }
-      }
-
-      if (chunk.includes("STEP:")) {
-        const step = chunk.split("STEP:")[1].trim().split("\n")[0];
-
-        if (step.includes("FAILED")) {
-          deployingServices[name].status = "FAILED";
-          deployingServices[name].failed = true;
-        } else {
-          deployingServices[name].status = step;
-        }
-      }
-
-      renderServices();
-      read();
+    const res = await fetch("/deploy-repo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, repo, type, env })
     });
-  }
 
-  read();
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+
+    function read() {
+      reader.read().then(({ done, value }) => {
+        if (done) {
+          if (!deployingServices[name].failed) {
+            deployingServices[name].status = "READY";
+          }
+          renderServices();
+          loadServices();
+          return;
+        }
+
+        const chunk = decoder.decode(value);
+        deployingServices[name].logs += chunk;
+
+        if (chunk.includes("STEP:")) {
+          const step = chunk.split("STEP:")[1].trim().split("\n")[0];
+
+          if (step.includes("FAILED")) {
+            deployingServices[name].status = "FAILED";
+            deployingServices[name].failed = true;
+          } else {
+            deployingServices[name].status = step;
+          }
+        }
+
+        renderServices();
+        read();
+      });
+    }
+
+    read();
+
+  } else {
+
+    // ================= ✅ IMAGE FLOW (FIXED) =================
+
+    const image = imageEl.value;
+
+    const res = await fetch("/provision", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        image,
+        type,
+        replicas: parseInt(replicasEl.value),
+        env
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      deployingServices[name].status = "FAILED";
+      deployingServices[name].logs = err;
+      deployingServices[name].failed = true;
+      renderServices();
+      return;
+    }
+
+    // mark as deploying → real state will come from loadServices()
+    deployingServices[name].status = "DEPLOYING";
+
+    renderServices();
+
+    // allow k8s to reflect
+    setTimeout(loadServices, 2000);
+  }
 }
 
 async function deleteService(name) {
@@ -507,14 +535,16 @@ function renderServices() {
 
   let rows = "";
 
-  // 🔥 DEPLOYING SERVICES FIRST
+  // 🔥 DEPLOYING SERVICES FIRST (SEPARATED VISUALLY)
   Object.keys(deployingServices).forEach(name => {
     const s = deployingServices[name];
 
     rows += `
-      <tr>
-        <td>${name} <span class="badge repo">repo</span></td>
-        <td class="${getColor(s.status)}">${s.deleting ? "Deleting..." : s.status}</td>
+      <tr style="background:#f9f9f9;">
+        <td>${name} <span class="badge repo">deploying</span></td>
+        <td class="${getColor(s.status)}">
+          ${s.deleting ? "Deleting..." : s.status}
+        </td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -527,17 +557,67 @@ function renderServices() {
         <td colspan="6">
           ${renderTimeline(s.status)}
           ${renderExplain(s.explain)}
-          <pre style="max-height:150px;overflow:auto;background:#111;color:#0f0;padding:5px;">
-          ${s.logs}
+          <pre style="max-height:120px;overflow:auto;background:#111;color:#0f0;padding:5px;">
+${s.logs}
           </pre>
         </td>
       </tr>
     `;
   });
 
-  // call original load logic AFTER this if needed
+  // 🔥 THEN LOAD REAL SERVICES (NO OVERWRITE)
+  fetch("/services")
+    .then(r => r.json())
+    .then(services => {
 
-  tbody.innerHTML = rows;
+      let serviceRows = [];
+
+      services.sort((a,b)=>a.name.localeCompare(b.name));
+
+      services.forEach(s=>{
+        s.pods.sort((a,b)=>a.pod.localeCompare(b.pod));
+
+        const health=getHealth(s);
+
+        serviceRows.push(`
+          <tr>
+            <td>${s.name} <span class="badge ${s.source}">${s.source}</span></td>
+            <td class="${health.cls}">${health.text}</td>
+            <td>${s.running}/${s.replicas}</td>
+            <td>-</td>
+            <td>-</td>
+            <td>
+              <button onclick="window.open('http://${s.name}.127.0.0.1.nip.io')">Open</button>
+              <button onclick="deleteService('${s.name}')">Delete</button>
+              <button onclick="restartService('${s.name}')">Restart</button>
+              <button onclick="updateService('${s.name}')">Update</button>
+              <button onclick="rollbackService('${s.name}')">Rollback</button>
+              <button onclick="showHistory('${s.name}')">History</button>
+            </td>
+          </tr>
+        `);
+
+        s.pods.forEach(p=>{
+          serviceRows.push(`
+            <tr>
+              <td>↳ ${p.pod}</td>
+              <td>${p.status}</td>
+              <td>-</td>
+              <td>-</td>
+              <td>-</td>
+              <td>
+                <button onclick="execPod('${p.pod}')">Exec</button>
+                <button onclick="showLogs('${p.pod}')">Logs</button>
+                <button onclick="deletePod('${p.pod}')">Delete Pod</button>
+              </td>
+            </tr>
+          `);
+        });
+
+      });
+
+      tbody.innerHTML = rows + serviceRows.join("");
+    });
 }
 
 function renderExplain(explain) {
