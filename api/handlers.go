@@ -1132,3 +1132,115 @@ CMD ["python","app.py"]`
 
 	log("STEP:READY")
 }
+
+func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		http.Error(w, "name required", 400)
+		return
+	}
+
+	// ---------------- GET POD ----------------
+	podCmd := exec.Command(
+		"kubectl", "get", "pods",
+		"-n", config.AppConfig.Namespace,
+		"-l", "app="+name,
+		"-o", "jsonpath={.items[0].metadata.name}",
+	)
+
+	podOut, err := podCmd.Output()
+	if err != nil || len(podOut) == 0 {
+		http.Error(w, "no pod found", 500)
+		return
+	}
+
+	pod := strings.TrimSpace(string(podOut))
+
+	// ---------------- GET STATUS ----------------
+	statusCmd := exec.Command(
+		"kubectl", "get", "pod", pod,
+		"-n", config.AppConfig.Namespace,
+		"-o", "jsonpath={.status.phase}",
+	)
+
+	statusOut, _ := statusCmd.Output()
+	status := strings.TrimSpace(string(statusOut))
+	statusLower := strings.ToLower(status)
+
+	// ---------------- GET WAITING REASON ----------------
+	reasonCmd := exec.Command(
+		"kubectl", "get", "pod", pod,
+		"-n", config.AppConfig.Namespace,
+		"-o", "jsonpath={.status.containerStatuses[0].state.waiting.reason}",
+	)
+
+	reasonOut, _ := reasonCmd.Output()
+	reason := strings.TrimSpace(string(reasonOut))
+
+	if reason != "" {
+		status = reason
+		statusLower = strings.ToLower(reason)
+	}
+
+	// ---------------- GET LOGS ----------------
+	logCmd := exec.Command(
+		"kubectl", "logs", pod,
+		"-n", config.AppConfig.Namespace,
+		"--tail=30",
+	)
+
+	logOut, _ := logCmd.Output()
+	logs := strings.ToLower(string(logOut))
+
+	// ---------------- RULE ENGINE ----------------
+	cause := "Unknown issue"
+	suggestion := "Check logs manually"
+
+	if strings.Contains(logs, "connection refused") {
+		cause = "Dependency not reachable (DB/API)"
+		suggestion = "Check service URL or dependency service"
+
+	} else if strings.Contains(logs, "port already in use") {
+		cause = "Port conflict"
+		suggestion = "Change application port"
+
+	} else if strings.Contains(logs, "permission denied") {
+		cause = "Permission issue inside container"
+		suggestion = "Check file permissions or user"
+
+	} else if strings.Contains(logs, "module not found") ||
+		strings.Contains(logs, "cannot import") {
+		cause = "Build/Image issue"
+		suggestion = "Check dependencies or rebuild image"
+
+	} else if strings.Contains(statusLower, "crashloopbackoff") {
+		cause = "Application crash on startup"
+		suggestion = "Check logs for startup failure"
+
+	} else if strings.Contains(statusLower, "imagepullbackoff") {
+		cause = "Image cannot be pulled"
+		suggestion = "Check image name/tag"
+
+	} else if strings.Contains(statusLower, "pending") {
+		cause = "Pod not scheduled"
+		suggestion = "Check cluster resources"
+	}
+
+	// ---------------- HEALTHY CASE ----------------
+	if statusLower == "running" && cause == "Unknown issue" {
+		cause = "No issues detected"
+		suggestion = "Service is running normally"
+	}
+
+	// ---------------- RESPONSE ----------------
+	resp := map[string]string{
+		"service":    name,
+		"pod":        pod,
+		"status":     status,
+		"cause":      cause,
+		"suggestion": suggestion,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}

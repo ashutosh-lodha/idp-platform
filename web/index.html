@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Mini IDP</title>
+  <title>Mini-IDP</title>
   <link rel="icon" type="image/x-icon" href="continuous.png">
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"/>
@@ -196,7 +196,7 @@
       <line x1="21.2" y1="21.2" x2="18" y2="19.2" stroke="white" stroke-width="1.6" stroke-linecap="round" opacity="0.75"/>
     </svg>
     <div id="logo-text-wrap">
-      <div id="logo-name">Internal Developer</div>
+      <div id="logo-name">Mini-Internal Developer</div>
       <div id="logo-sub">Platform</div>
     </div>
   </div>
@@ -206,7 +206,7 @@
     <div class="stat-pill" id="pill-failed" style="display:none"><span class="stat-dot" style="background:var(--red-l);box-shadow:0 0 5px var(--red-l)"></span><span id="stat-failed">0 failed</span></div>
     <div class="stat-pill"><span class="stat-dot" style="background:var(--blue-l);box-shadow:0 0 5px var(--blue-l)"></span><span id="stat-total">0 total</span></div>
   </div>
-  <button id="btn-refresh" onclick="loadServices()">↻ Refresh</button>
+  <button id="btn-refresh" onclick="manualRefresh()">↻ Refresh</button>
 </div>
 
 <!-- MAIN -->
@@ -314,6 +314,23 @@
       <button class="btn btn-ghost" onclick="cancelScale()">Cancel</button>
       <button onclick="doScale()" style="background:linear-gradient(135deg,#2563eb,#7c3aed);border:none;border-radius:7px;color:#fff;padding:7px 18px;font-size:13px;font-weight:600;cursor:pointer">Apply</button>
     </div>
+  </div>
+</div>
+
+<!-- DIAGNOSE MODAL -->
+<div class="modal-overlay" id="diag-overlay" onclick="closeDiagnose()">
+  <div onclick="event.stopPropagation()" style="background:var(--surf);border:1px solid var(--border);border-radius:13px;width:92%;max-width:560px;box-shadow:0 24px 64px rgba(0,0,0,.6);overflow:hidden">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:18px">🩺</span>
+        <div>
+          <div style="font-size:15px;font-weight:700;color:var(--text)">Service Diagnosis</div>
+          <div id="diag-svc" style="font-size:12px;color:var(--dim);margin-top:2px"></div>
+        </div>
+      </div>
+      <button class="btn btn-ghost" onclick="closeDiagnose()">Close</button>
+    </div>
+    <div id="diag-body" style="padding:18px 22px"></div>
   </div>
 </div>
 

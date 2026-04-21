@@ -43,6 +43,18 @@ function setMode(m) {
 }
 
 /* ══════════════════════════════════════════
+   Refresh
+══════════════════════════════════════════ */
+
+function manualRefresh() {
+  var btn = document.getElementById('btn-refresh');
+  btn.style.transition = 'transform .6s ease';
+  setTimeout(function(){ btn.style.transform = 'rotate(0deg)'; }, 600);
+  loadServices();
+  toast('Refreshed', 'success');
+}
+
+/* ══════════════════════════════════════════
    LOAD SERVICES
 ══════════════════════════════════════════ */
 function loadServices() {
@@ -397,6 +409,7 @@ function buildServiceCard(s) {
     + '<button class="btn btn-ghost" onclick="scaleService(\''   + esc(s.name) + '\')">⇡ Scale</button>'
     + '<button class="btn btn-ghost" onclick="rollbackService(\'' + esc(s.name) + '\')">⏪ Rollback</button>'
     + '<button class="btn btn-ghost" onclick="showHistory(\''    + esc(s.name) + '\')">⧖ History</button>'
+    + '<button class="btn btn-ghost" onclick="diagnoseService(\'' + esc(s.name) + '\')" style="color:var(--amber-l);border-color:#f59e0b40;background:#f59e0b18">🩺 Diagnose</button>'
     + '<button class="btn btn-red"   onclick="deleteService(\''  + esc(s.name) + '\')">✕ Delete</button>'
     + '</div>'
     + '</div>'
@@ -533,4 +546,51 @@ function esc(s) {
     .replace(/>/g,  '&gt;')
     .replace(/"/g,  '&quot;')
     .replace(/'/g,  '&#39;');
+}
+
+/* ══════════════════════════════════════════
+   DIAGNOSE SERVICE
+══════════════════════════════════════════ */
+
+/* ══════════════════════════════════════════
+   DIAGNOSE
+══════════════════════════════════════════ */
+function diagnoseService(name) {
+  document.getElementById('diag-svc').textContent   = name;
+  document.getElementById('diag-body').innerHTML    = '<div style="color:var(--dim);text-align:center;padding:30px 0">🔎 Diagnosing…</div>';
+  document.getElementById('diag-overlay').classList.add('open');
+
+  fetch('/diagnose?name=' + encodeURIComponent(name))
+    .then(function(r){ if (!r.ok) throw new Error(r.statusText); return r.json(); })
+    .then(function(data) {
+      var statusLow = (data.status || '').toLowerCase();
+      var color =
+        statusLow.indexOf('running') !== -1 ? 'var(--green)' :
+        statusLow.indexOf('pending') !== -1 ? 'var(--blue)'  :
+        'var(--red)';
+
+      document.getElementById('diag-body').innerHTML =
+          '<div style="background:var(--surf2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">'
+        +   '<div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-bottom:6px">Status</div>'
+        +   '<div style="display:flex;align-items:center;gap:8px"><span class="dot" style="background:' + color + ';box-shadow:0 0 5px ' + color + '"></span>'
+        +   '<span style="color:' + color + ';font-weight:600;font-size:13px">' + esc(data.status || 'Unknown') + '</span></div>'
+        +   (data.pod ? '<div style="font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--dim);margin-top:6px">' + esc(data.pod) + '</div>' : '')
+        + '</div>'
+        + '<div style="background:#ef444414;border:1px solid #ef444430;border-left:3px solid var(--red);border-radius:8px;padding:12px 14px;margin-bottom:10px">'
+        +   '<div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--red-l);margin-bottom:5px">Root Cause</div>'
+        +   '<div style="font-size:13px;color:var(--text);line-height:1.5">' + esc(data.cause || '—') + '</div>'
+        + '</div>'
+        + '<div style="background:#10b98114;border:1px solid #10b98130;border-left:3px solid var(--green);border-radius:8px;padding:12px 14px">'
+        +   '<div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--green-l);margin-bottom:5px">Suggested Fix</div>'
+        +   '<div style="font-size:13px;color:var(--text);line-height:1.5">' + esc(data.suggestion || '—') + '</div>'
+        + '</div>';
+    })
+    .catch(function(err) {
+      document.getElementById('diag-body').innerHTML =
+        '<div style="color:var(--red-l);text-align:center;padding:30px 0">Failed to diagnose: ' + esc(err.message || 'unknown') + '</div>';
+    });
+}
+
+function closeDiagnose() {
+  document.getElementById('diag-overlay').classList.remove('open');
 }

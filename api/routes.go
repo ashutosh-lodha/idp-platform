@@ -19,4 +19,5 @@ func RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/history", ServiceHistoryHandler)
 	mux.HandleFunc("/webhook/github", GitHubWebhookHandler)
 	mux.HandleFunc("/events", EventsHandler)
+	mux.HandleFunc("/diagnose", DiagnoseHandler)
 }
