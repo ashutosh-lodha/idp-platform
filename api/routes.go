@@ -18,4 +18,5 @@ func RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/rollback", RollbackServiceHandler)
 	mux.HandleFunc("/history", ServiceHistoryHandler)
 	mux.HandleFunc("/webhook/github", GitHubWebhookHandler)
+	mux.HandleFunc("/events", EventsHandler)
 }

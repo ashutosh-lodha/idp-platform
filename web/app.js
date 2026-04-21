@@ -22,6 +22,12 @@ document.addEventListener('DOMContentLoaded', function () {
   setInterval(loadServices, 5000);
 });
 
+var evtSrc = new EventSource('/events');
+evtSrc.onmessage = function(e) {
+  toast(e.data + ' github webhook triggered', 'info');
+  loadServices();
+};
+
 /* ══════════════════════════════════════════
    MODE TOGGLE
 ══════════════════════════════════════════ */
@@ -362,6 +368,7 @@ function buildServiceCard(s) {
       + '<span class="pod-metric">' + m.cpu + 'm</span>'
       + '<span class="pod-metric">' + m.memory + 'Mi</span>'
       + '<button class="btn btn-ghost btn-sm" onclick="showLogs(\'' + esc(p.pod) + '\')">Logs</button>'
+      + '<button class="btn btn-ghost btn-sm" onclick="execPod(\'' + esc(p.pod) + '\')">⌘ Exec</button>'
       + '<button class="btn btn-ghost btn-sm" onclick="deletePod(\'' + esc(p.pod) + '\')" style="color:var(--red-l)">✕ Del</button>'
       + '</div>';
   }).join('');

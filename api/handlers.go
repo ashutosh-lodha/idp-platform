@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -22,6 +23,9 @@ type ServiceInfo struct {
 	Status string `json:"status"`
 	URL    string `json:"url"`
 }
+
+var notifyChans = make(map[chan string]bool)
+var notifyMu sync.Mutex
 
 func HealthHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
@@ -732,6 +736,29 @@ func ServiceHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
+func EventsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	ch := make(chan string, 8)
+	notifyMu.Lock()
+	notifyChans[ch] = true
+	notifyMu.Unlock()
+	defer func() { notifyMu.Lock(); delete(notifyChans, ch); notifyMu.Unlock() }()
+
+	flusher, _ := w.(http.Flusher)
+	for {
+		select {
+		case msg := <-ch:
+			fmt.Fprintf(w, "data: %s\n\n", msg)
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
 func GitHubWebhookHandler(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Println("========== WEBHOOK HIT ==========")
@@ -797,6 +824,17 @@ func GitHubWebhookHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fmt.Println("SERVICES FOUND:", serviceSet)
+
+	notifyMu.Lock()
+	for name := range serviceSet {
+		for ch := range notifyChans {
+			select {
+			case ch <- name:
+			default:
+			}
+		}
+	}
+	notifyMu.Unlock()
 
 	// ================= LOOP SERVICES =================
 	for name := range serviceSet {
