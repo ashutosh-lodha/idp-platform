@@ -39,15 +39,6 @@ The platform integrates Kubernetes, Helm, Docker, and GitHub into a single workf
   - API keys  
   - runtime configs  
 
-Example:
-```json
-{
-  "env": {
-    "NODE_ENV": "production",
-    "API_URL": "https://api.example.com"
-  }
-}
-
 ---
 
 ### 2. GitHub Auto Deployment
